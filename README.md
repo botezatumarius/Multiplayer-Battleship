@@ -169,10 +169,9 @@ REST will be used for client-API Gateway communication due to its simplicity and
 
   ```json
   {
-  "user_id": "string",
-  "result": "win" | "loss"
+    "user_id": "string",
+    "result": "win" //or "loss"
   }
-
   ```
 
   - **Response**:
@@ -341,9 +340,9 @@ REST will be used for client-API Gateway communication due to its simplicity and
 
   ```json
   {
-  "event": "game_started",
-  "message": "Player 2 has joined. Game is starting.",
-  "your_turn": true/false
+    "event": "game_started",
+    "message": "Player 2 has joined. Game is starting.",
+    "your_turn": true //or false
   }
   ```
 
@@ -355,17 +354,17 @@ REST will be used for client-API Gateway communication due to its simplicity and
 
   ```json
   {
-  "game_id": "string",
-  "attacker_id": "string",
-  "coordinates": {
-    "x": 5,
-    "y": 3
-  },
-  "hit": true | false,
-  "ship_destroyed": true | false,
-  "destroyed_ship": "Carrier" | "Battleship" | "Cruiser" | "Submarine" | "Destroyer" | "none",
-  "opponent_ships_remaining": 3,
-  "status": "in_progress"
+    "game_id": "string",
+    "attacker_id": "string",
+    "coordinates": {
+      "x": 5,
+      "y": 3
+    },
+    "hit": true, //or false
+    "ship_destroyed": true, //or false
+    "destroyed_ship": "Carrier", //or "Battleship" | "Cruiser" | "Submarine" | "Destroyer" | "none"
+    "opponent_ships_remaining": 3,
+    "status": "in_progress"
   }
   ```
 
