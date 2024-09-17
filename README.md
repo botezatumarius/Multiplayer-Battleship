@@ -40,7 +40,7 @@ The API Gateway is the entry point for all client requests and performs several 
 
 - **Routing**: Directs incoming requests to the appropriate microservice based on the request URL and method.
 - **Load Balancing**: Distributes incoming traffic across multiple instances of microservices to ensure even load and high availability.
-- **Caching**: Uses Redis to store frequently accessed data, improving response times and reducing load on backend services.
+- **Caching**: Uses Redis to store frequently accessed data, such as the JWT validation token and user profile information.
 - **WebSocket Management**: Establishes and manages WebSocket connections for real-time communication between clients and the services.
 - **Service Discovery**: Integrates with a service registry to discover and route requests to the available instances of microservices.
 
@@ -75,6 +75,52 @@ The Profile Service handles user-related functionality and data management, incl
 REST will be used for client-API Gateway communication due to its simplicity and broad compatibility for standard API interactions, while WebSockets handle real-time updates and bidirectional communication essential for live gameplay. gRPC will be used for service-to-service communication because it offers high performance with low latency, efficient binary serialization which is ideal for complex, high-throughput interactions between microservices.
 
 ### Data Management
+
+All components will have a maximum duration a request or task can take before it is automatically terminated or fails.
+
+- **API Gateway**:
+
+A timeout of 30 seconds for a standard request-response cycle.
+
+```json
+{
+  "timeout": 30
+}
+```
+
+- **Microservice**:
+
+A service handling game logic might have a 10-second timeout for complex game state updates.
+
+```json
+{
+  "gameLogicTimeout": 10
+}
+```
+
+- **Database Query**:
+
+A database query fetching a user profile might have a 5-second timeout.
+
+```json
+{
+  "queryTimeout": 5
+}
+```
+
+### Limits to concurrent tasks
+
+- **API Gateway**:
+
+Limits the number of concurrent requests it can process. If the limit is 100, the API gateway will only allow 100 requests at a time and queue or reject additional requests until some tasks are completed.
+
+- **Microservice Task Processing**:
+
+A microservice handling game logic might process only 10 player moves at a time.
+
+- **Database connection pooling**:
+
+A database will have a limit on how many connections can be active concurrently. For instance, only 20 connections are allowed at the same time to avoid overloading the database.
 
 ## 1. Profile Service (User Authentication and Management)
 
@@ -182,6 +228,20 @@ REST will be used for client-API Gateway communication due to its simplicity and
     "total_games": 21,
     "wins": 13,
     "losses": 8
+  }
+  ```
+
+#### 1.5 GET /auth/status
+
+- **Description**: Gives the status of the microservice.
+
+- **Response**:
+
+  ```json
+  {
+    "status": "ok",
+    "uptime": "2h 15m",
+    "timestamp": "2024-09-17T10:15:30Z"
   }
   ```
 
@@ -327,6 +387,20 @@ REST will be used for client-API Gateway communication due to its simplicity and
   {
     "message": "Opponent has left the game.",
     "status": "game_abandoned"
+  }
+  ```
+
+#### 2.5 GET /game/status
+
+- **Description**: Gives the status of the microservice.
+
+- **Response**:
+
+  ```json
+  {
+    "status": "ok",
+    "uptime": "2h 15m",
+    "timestamp": "2024-09-17T10:15:30Z"
   }
   ```
 
