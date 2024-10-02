@@ -1,0 +1,26 @@
+{
+  "name": "pad",
+  "version": "1.0.0",
+  "description": "## Application Suitability",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/botezatumarius/Multiplayer-Battleship.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/botezatumarius/Multiplayer-Battleship/issues"
+  },
+  "homepage": "https://github.com/botezatumarius/Multiplayer-Battleship#readme",
+  "dependencies": {
+    "axios": "^1.7.7",
+    "express": "^4.21.0",
+    "redis": "^4.7.0",
+    "ws": "^8.18.0"
+  }
+}
