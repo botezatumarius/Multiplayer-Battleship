@@ -70,4 +70,18 @@ public class AuthService {
 
         return userRepository.findByUsername(username);
     }
+
+    public String updateUserStats(User user, String result) {
+        if ("win".equals(result)) {
+            user.setWins(user.getWins() + 1);
+        } else if ("loss".equals(result)) {
+            user.setLosses(user.getLosses() + 1);
+        } else {
+            throw new IllegalArgumentException("Invalid result type.");
+        }
+
+        user.setTotalGames(user.getTotalGames() + 1);
+        userRepository.save(user);
+        return "User stats updated successfully";
+    }
 }
