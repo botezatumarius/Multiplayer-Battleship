@@ -9,16 +9,34 @@ const port = 3000;
 // Object to cache service addresses
 const serviceAddressesCache = {};
 
+// Concurrent request limits and queues
+const maxConcurrentRequests = 5;
+const requestQueues = {
+  battleship: [],
+  profile: []
+};
+const activeRequests = {
+  battleship: 0,
+  profile: 0
+};
+
 const redisClient = Redis.createClient({
-  url: 'redis://localhost:6380' // Not necessary atm
+  url: 'redis://localhost:6379'
 });
 
 // Middleware
 app.use(express.json());
 
+// Function to process queued requests
+const processQueue = (service) => {
+  if (requestQueues[service].length > 0 && activeRequests[service] < maxConcurrentRequests) {
+    const { ws, service, action, data, authHeader, resolve } = requestQueues[service].shift();
+    handleRequest(ws, service, action, data, authHeader).then(resolve);
+  }
+};
+
 // Handle Redis connection events
-redisClient.on('connect', () => {
-});
+redisClient.on('connect', () => {});
 
 redisClient.on('error', (err) => {
   console.log('Redis Client Error:', err);
@@ -37,7 +55,6 @@ redisClient.connect().then(() => {
     ws.on('message', async (message) => {
       console.log('Received:', message);
 
-      // Parse incoming message
       let parsedMessage;
       try {
         parsedMessage = JSON.parse(message);
@@ -46,85 +63,45 @@ redisClient.connect().then(() => {
         return ws.send(JSON.stringify({ error: 'Invalid message format' }));
       }
 
-      console.log(`Parsed message:`, parsedMessage);
-
       const { service, action, data, authHeader } = parsedMessage;
 
-      console.log(`Service: ${service}, Action: ${action}`);
-
-      // Handle Service Discovery status check
-      if (service === 'discovery' && action === 'status') {
+       // Handle Service Discovery status check
+       if (service === 'discovery' && action === 'status') {
         const response = await axios.get('http://localhost:4000/status');
         ws.send(JSON.stringify(response.data));
         return
      }
 
-      try {
-        // Check if authorization is required for the action
-        const requiresAuth = requiresAuthorization(service, action);
-        if (requiresAuth && !authHeader) {
-          return ws.send(JSON.stringify({ error: 'Authorization header is required' }));
-        }
+     if (service === 'gateway' && action === 'status') {
+      response = { status: 200, message: 'API Gateway is running' };
+      return
+    } 
 
-        // Lookup service address using service discovery
-        const serviceAddress = await getServiceAddress(service);
-        console.log(`Service address for ${service}: ${serviceAddress}`);
-        
-        let response;
-        
-        // Handle requests based on the service and action
-        if (service === 'gateway' && action === 'status') {
-          // API Gateway status check
-          response = { status: 200, message: 'API Gateway is running' };
-        } else if (service === 'battleship' && action === 'status') {
-          console.log("Sending request to battleship service");
-          // GET request for battleship status
-          response = await axios.get(`${serviceAddress}/${action}`, {
-            headers: requiresAuth ? { 'Authorization': authHeader } : {},
-            timeout: 5000 
+      if (service in activeRequests) {
+        if (activeRequests[service] < maxConcurrentRequests) {
+          activeRequests[service]++;
+          handleRequest(ws, service, action, data, authHeader).finally(() => {
+            activeRequests[service]--;
+            processQueue(service);
           });
-        } else if (service === 'profile' && action === 'status') {
-          console.log("Sending request to profile service");
-          // GET request for profile status
-          response = await axios.get(`${serviceAddress}/${action}`, {
-            headers: requiresAuth ? { 'Authorization': authHeader } : {},
-            timeout: 5000 
-          });
-        } else if (service === 'battleship') {
-          // Handle other battleship actions (assumed to be POST)
-          response = await axios.post(`${serviceAddress}/game/${action}`, data, {
-            headers: requiresAuth ? { 'Authorization': authHeader } : {},
-            timeout: 5000 
-          });
-        } else if (service === 'profile') {
-          // Handle profile actions
-          if (action === 'profile') {
-            response = await axios.get(`${serviceAddress}/auth/${action}`, {
-              headers: requiresAuth ? { 'Authorization': authHeader } : {},
-              timeout: 5000 
-            });
-          } else {
-            // Default to POST for other profile actions
-            response = await axios.post(`${serviceAddress}/auth/${action}`, data, {
-              headers: requiresAuth ? { 'Authorization': authHeader } : {},
-              timeout: 5000 
-            });
-          }
         } else {
-          return ws.send(JSON.stringify({ error: 'Unknown service or action' }));
+          requestQueues[service].push({
+            ws,
+            service,
+            action,
+            data,
+            authHeader,
+            resolve: () => {
+              activeRequests[service]++;
+              handleRequest(ws, service, action, data, authHeader).finally(() => {
+                activeRequests[service]--;
+                processQueue(service);
+              });
+            }
+          });
         }
-
-        // Send the actual response from the service or an error
-        ws.send(JSON.stringify(response.data || response));
-      } catch (error) {
-        console.error('Error forwarding request:', error.message);
-        
-        // Send the error message from the microservice (if available)
-        if (error.response && error.response.data) {
-          ws.send(JSON.stringify(error.response.data));
-        } else {
-          ws.send(JSON.stringify({ error: 'Error processing request', details: error.message }));
-        }
+      } else {
+        ws.send(JSON.stringify({ error: 'Unknown service' }));
       }
     });
   });
@@ -136,75 +113,93 @@ redisClient.connect().then(() => {
 
   // API Gateway status check
   app.get('/status', (req, res) => {
-    console.log('200 OK');
     res.sendStatus(200);
   });
 
-  // Function to get service address from the service discovery service
+  // Function to handle the request
+  const handleRequest = async (ws, service, action, data, authHeader) => {
+    try {
+      const requiresAuth = requiresAuthorization(service, action);
+      if (requiresAuth && !authHeader) {
+        return ws.send(JSON.stringify({ error: 'Authorization header is required' }));
+      }
+
+      const serviceAddress = await getServiceAddress(service);
+
+      let response;
+      if (service === 'battleship' && action === 'status') {
+        try {
+            response = await axios.get(`${serviceAddress}/${action}`, {
+                headers: requiresAuth ? { 'Authorization': authHeader } : {},
+                timeout: 5000
+            });
+            return ws.send(JSON.stringify({ status: 200, message: 'Battleship service is healthy' }));
+        } catch (error) {
+            console.error('Error fetching battleship status:', error.message);
+            return ws.send(JSON.stringify({ status: 503, error: 'Battleship service is down' }));
+        }
+    } else if (service === 'profile' && action === 'status') {
+        try {
+            response = await axios.get(`${serviceAddress}/${action}`, {
+                headers: requiresAuth ? { 'Authorization': authHeader } : {},
+                timeout: 5000
+            });
+            return ws.send(JSON.stringify({ status: 200, message: 'Profile service is healthy' }));
+        } catch (error) {
+            console.error('Error fetching profile status:', error.message);
+            return ws.send(JSON.stringify({ status: 503, error: 'Profile service is down' }));
+        }
+    }
+    
+    
+    else if (service === 'battleship') {
+        response = await axios.post(`${serviceAddress}/game/${action}`, data, {
+          headers: requiresAuth ? { 'Authorization': authHeader } : {},
+          timeout: 5000
+        });
+      } else if (service === 'profile') {
+        if (action === 'profile') {
+          response = await axios.get(`${serviceAddress}/auth/${action}`, {
+            headers: requiresAuth ? { 'Authorization': authHeader } : {},
+            timeout: 5000
+          });
+        } else {
+          response = await axios.post(`${serviceAddress}/auth/${action}`, data, {
+            headers: requiresAuth ? { 'Authorization': authHeader } : {},
+            timeout: 5000
+          });
+        }
+      }
+
+      ws.send(JSON.stringify(response.data || response));
+    } catch (error) {
+      console.error('Error forwarding request:', error.message);
+      if (error.response && error.response.data) {
+        ws.send(JSON.stringify(error.response.data));
+      } else {
+        ws.send(JSON.stringify({ error: 'Error processing request', details: error.message }));
+      }
+    }
+  };
+
   const getServiceAddress = async (serviceName) => {
-    console.log(`Looking up service address for: ${serviceName}`); 
-
-    // Check cache first
-    if (serviceAddressesCache[serviceName]) {
-      return serviceAddressesCache[serviceName];
-    }
-
-    // If not in cache, fetch from service discovery
-    try {
-      const response = await axios.get(`http://localhost:4000/lookup/${serviceName}`); 
-      const address = response.data.serviceAddress;
-      serviceAddressesCache[serviceName] = address;
-      return address;
-    } catch (error) {
-      console.error(`Error looking up service ${serviceName}:`, error.message);
-      throw new Error('Service not found');
-    }
+    if (serviceAddressesCache[serviceName]) return serviceAddressesCache[serviceName];
+    const response = await axios.get(`http://localhost:4000/lookup/${serviceName}`);
+    const address = response.data.serviceAddress;
+    serviceAddressesCache[serviceName] = address;
+    return address;
   };
 
-  // Function to check service status
-  const checkServiceStatus = async (url, serviceName) => {
-    try {
-      const response = await axios.get(url, { timeout: 5000 }); 
-      return { status: 200, message: `${serviceName} Service is healthy!` };
-    } catch (error) {
-      return { status: 500, message: `${serviceName} Service is down: ${error.message}` };
-    }
-  };
-
-  // Function to ping microservices every 10 seconds
-  const pingMicroservices = async () => {
-    try {
-      // Check if there are any cached service addresses
-      if (Object.keys(serviceAddressesCache).length === 0) {
-        return;
-      }
-
-      // Iterate over each cached service address
-      for (const [serviceName, serviceUrl] of Object.entries(serviceAddressesCache)) {
-        const statusResponse = await checkServiceStatus(`${serviceUrl}/status`, serviceName);
-        console.log(statusResponse.message);
-      }
-    } catch (error) {
-      console.error('Error pinging microservices:', error.message);
-    }
-  };
-
-  // Ping microservices every 10 seconds
-  setInterval(pingMicroservices, 10000);
-
-  // Check if the action requires authorization
   const requiresAuthorization = (service, action) => {
     const nonProtectedActions = {
-      battleship: ['status'], // Actions that don't require auth in battleship service
-      profile: ['register', 'login', 'status', 'profile'], // Actions that don't require auth in profile service
-      gateway: ['status'], // Actions that don't require auth in gateway service,
+      battleship: ['status'],
+      profile: ['register', 'login', 'status'],
+      gateway: ['status'],
       discovery: ['status']
     };
-
     return !nonProtectedActions[service]?.includes(action);
   };
 
-  // Start the server
   app.listen(port, () => {
     console.log(`API Gateway running on port ${port}`);
   });
