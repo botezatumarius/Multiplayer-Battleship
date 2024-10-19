@@ -1,7 +1,7 @@
 const express = require('express');
-const WebSocket = require('ws');
 const axios = require('axios');
 const Redis = require('redis');
+const WebSocket = require('ws');
 
 const app = express();
 const port = 3000;
@@ -9,17 +9,7 @@ const port = 3000;
 // Object to cache service addresses
 const serviceAddressesCache = {};
 
-// Concurrent request limits and queues
-const maxConcurrentRequests = 5;
-const requestQueues = {
-  battleship: [],
-  profile: []
-};
-const activeRequests = {
-  battleship: 0,
-  profile: 0
-};
-
+// Redis client for caching service addresses
 const redisClient = Redis.createClient({
   url: 'redis://localhost:6379'
 });
@@ -27,15 +17,179 @@ const redisClient = Redis.createClient({
 // Middleware
 app.use(express.json());
 
-// Function to process queued requests
-const processQueue = (service) => {
-  if (requestQueues[service].length > 0 && activeRequests[service] < maxConcurrentRequests) {
-    const { ws, service, action, data, authHeader, resolve } = requestQueues[service].shift();
-    handleRequest(ws, service, action, data, authHeader).then(resolve);
+// WebSocket server setup
+const wss = new WebSocket.Server({ noServer: true });
+
+// Handle WebSocket connections
+wss.on('connection', (ws) => {
+  console.log('Client connected via WebSocket');
+
+  ws.on('message', async (message) => {
+    const parsedMessage = JSON.parse(message);
+    const { action, data, authHeader } = parsedMessage;
+
+    try {
+      const response = await handleBattleshipRequest(action, data, authHeader);
+      ws.send(JSON.stringify(response));
+    } catch (error) {
+      console.error('Error handling WebSocket message:', error.message);
+      ws.send(JSON.stringify({ error: 'Error processing request', details: error.message }));
+    }
+  });
+
+  ws.on('close', () => {
+    console.log('Client disconnected from WebSocket');
+  });
+});
+
+// Handle HTTP server upgrade to WebSocket
+app.server = app.listen(port, () => {
+  console.log(`API Gateway running on port ${port}`);
+});
+
+app.server.on('upgrade', (request, socket, head) => {
+  wss.handleUpgrade(request, socket, head, (ws) => {
+    wss.emit('connection', ws, request);
+  });
+});
+
+// Root route
+app.get('/', (req, res) => {
+  res.send('Welcome to the Battleship API Gateway!');
+});
+
+// API Gateway status check
+app.get('/status', (req, res) => {
+  res.sendStatus(200);
+});
+
+// REST Endpoint: Get Profile Service status
+app.get('/profile/status', async (req, res) => {
+  try {
+    const serviceAddress = await getServiceAddress('profile');
+    const response = await axios.get(`${serviceAddress}/status`, { timeout: 5000 });
+    res.json({ status: response.data });
+  } catch (error) {
+    console.error('Error checking Profile Service status:', error.message);
+    res.status(500).json({ error: 'Error checking Profile Service status' });
+  }
+});
+
+// REST Endpoint: Handle Profile Service requests
+app.post('/auth/:action', (req, res) => {
+  const action = req.params.action;
+  const data = req.body;
+  const authHeader = req.headers.authorization;
+
+  handleProfileRequest(action, data, authHeader)
+    .then(response => res.json(response))
+    .catch(error => res.status(500).json({ error: error.message }));
+});
+
+// Function to handle the Battleship request forwarding
+const handleBattleshipRequest = async (action, data, authHeader) => {
+  try {
+    // Check if action requires authorization
+    const requiresAuth = requiresAuthorization('battleship', action);
+    if (requiresAuth && !authHeader) {
+      throw new Error('Authorization header is required');
+    }
+
+    const serviceAddress = await getServiceAddress('battleship');
+
+    let response;
+    if (action === 'status') {
+      // Handle status request as a GET request
+      response = await axios.get(`${serviceAddress}/status`, {
+        headers: requiresAuth ? { 'Authorization': authHeader } : {},
+        timeout: 5000
+      });
+    } else {
+      // Handle other actions as POST requests
+      response = await axios.post(`${serviceAddress}/game/${action}`, data, {
+        headers: requiresAuth ? { 'Authorization': authHeader } : {},
+        timeout: 5000
+      });
+    }
+
+    return response.data || response;
+  } catch (error) {
+    console.error('Error forwarding Battleship request:', error.message);
+    throw new Error('Error processing Battleship request');
   }
 };
 
-// Handle Redis connection events
+
+// Function to handle all Profile service requests
+const handleProfileRequest = async (action, data, authHeader) => {
+  try {
+    const requiresAuth = requiresAuthorization('profile', action);
+    if (requiresAuth && !authHeader) {
+      throw new Error('Authorization header is required');
+    }
+
+    const serviceAddress = await getServiceAddress('profile');
+    let response;
+
+    switch (action) {
+      case 'register':
+        response = await axios.post(`${serviceAddress}/auth/register`, data, {
+          timeout: 5000
+        });
+        break;
+
+      case 'login':
+        response = await axios.post(`${serviceAddress}/auth/login`, data, {
+          timeout: 5000
+        });
+        break;
+
+      case 'profile':
+        response = await axios.get(`${serviceAddress}/auth/profile`, {
+          headers: requiresAuth ? { 'Authorization': authHeader } : {},
+          timeout: 5000
+        });
+        break;
+
+      case 'update-stats':
+        response = await axios.post(`${serviceAddress}/update-stats`, data, {
+          headers: { 'Authorization': authHeader },
+          timeout: 5000
+        });
+        break;
+
+      default:
+        throw new Error('Unsupported action for Profile service');
+    }
+
+    return response.data || response;
+  } catch (error) {
+    console.error('Error forwarding Profile request:', error.message);
+    throw new Error('Error processing Profile request');
+  }
+};
+
+// Function to discover and cache the service address
+const getServiceAddress = async (serviceName) => {
+  if (serviceAddressesCache[serviceName]) return serviceAddressesCache[serviceName];
+  const response = await axios.get(`http://localhost:4000/lookup/${serviceName}`);
+  const address = response.data.serviceAddress;
+  serviceAddressesCache[serviceName] = address;
+  return address;
+};
+
+// Authorization logic for actions requiring authentication
+const requiresAuthorization = (service, action) => {
+  const nonProtectedActions = {
+    battleship: ['status'],
+    profile: ['register', 'login', 'status'],
+    gateway: ['status'],
+    discovery: ['status']
+  };
+  return !nonProtectedActions[service]?.includes(action);
+};
+
+// Redis client connection handling
 redisClient.on('connect', () => {});
 
 redisClient.on('error', (err) => {
@@ -45,164 +199,7 @@ redisClient.on('error', (err) => {
 // Explicitly connect the Redis client
 redisClient.connect().then(() => {
   console.log('Redis client connected successfully');
-
-  // Start the WebSocket server after Redis connection
-  const wss = new WebSocket.Server({ port: 8080 });
-
-  wss.on('connection', (ws) => {
-    console.log('Client connected via WebSocket');
-
-    ws.on('message', async (message) => {
-      console.log('Received:', message);
-
-      let parsedMessage;
-      try {
-        parsedMessage = JSON.parse(message);
-      } catch (e) {
-        console.error('Failed to parse message:', e);
-        return ws.send(JSON.stringify({ error: 'Invalid message format' }));
-      }
-
-      const { service, action, data, authHeader } = parsedMessage;
-
-       // Handle Service Discovery status check
-       if (service === 'discovery' && action === 'status') {
-        const response = await axios.get('http://localhost:4000/status');
-        ws.send(JSON.stringify(response.data));
-        return
-     }
-
-     if (service === 'gateway' && action === 'status') {
-      response = { status: 200, message: 'API Gateway is running' };
-      return
-    } 
-
-      if (service in activeRequests) {
-        if (activeRequests[service] < maxConcurrentRequests) {
-          activeRequests[service]++;
-          handleRequest(ws, service, action, data, authHeader).finally(() => {
-            activeRequests[service]--;
-            processQueue(service);
-          });
-        } else {
-          requestQueues[service].push({
-            ws,
-            service,
-            action,
-            data,
-            authHeader,
-            resolve: () => {
-              activeRequests[service]++;
-              handleRequest(ws, service, action, data, authHeader).finally(() => {
-                activeRequests[service]--;
-                processQueue(service);
-              });
-            }
-          });
-        }
-      } else {
-        ws.send(JSON.stringify({ error: 'Unknown service' }));
-      }
-    });
-  });
-
-  // Root route
-  app.get('/', (req, res) => {
-    res.send('Welcome to the Battleship API Gateway!');
-  });
-
-  // API Gateway status check
-  app.get('/status', (req, res) => {
-    res.sendStatus(200);
-  });
-
-  // Function to handle the request
-  const handleRequest = async (ws, service, action, data, authHeader) => {
-    try {
-      const requiresAuth = requiresAuthorization(service, action);
-      if (requiresAuth && !authHeader) {
-        return ws.send(JSON.stringify({ error: 'Authorization header is required' }));
-      }
-
-      const serviceAddress = await getServiceAddress(service);
-
-      let response;
-      if (service === 'battleship' && action === 'status') {
-        try {
-            response = await axios.get(`${serviceAddress}/${action}`, {
-                headers: requiresAuth ? { 'Authorization': authHeader } : {},
-                timeout: 5000
-            });
-            return ws.send(JSON.stringify({ status: 200, message: 'Battleship service is healthy' }));
-        } catch (error) {
-            console.error('Error fetching battleship status:', error.message);
-            return ws.send(JSON.stringify({ status: 503, error: 'Battleship service is down' }));
-        }
-    } else if (service === 'profile' && action === 'status') {
-        try {
-            response = await axios.get(`${serviceAddress}/${action}`, {
-                headers: requiresAuth ? { 'Authorization': authHeader } : {},
-                timeout: 5000
-            });
-            return ws.send(JSON.stringify({ status: 200, message: 'Profile service is healthy' }));
-        } catch (error) {
-            console.error('Error fetching profile status:', error.message);
-            return ws.send(JSON.stringify({ status: 503, error: 'Profile service is down' }));
-        }
-    }
-    
-    
-    else if (service === 'battleship') {
-        response = await axios.post(`${serviceAddress}/game/${action}`, data, {
-          headers: requiresAuth ? { 'Authorization': authHeader } : {},
-          timeout: 5000
-        });
-      } else if (service === 'profile') {
-        if (action === 'profile') {
-          response = await axios.get(`${serviceAddress}/auth/${action}`, {
-            headers: requiresAuth ? { 'Authorization': authHeader } : {},
-            timeout: 5000
-          });
-        } else {
-          response = await axios.post(`${serviceAddress}/auth/${action}`, data, {
-            headers: requiresAuth ? { 'Authorization': authHeader } : {},
-            timeout: 5000
-          });
-        }
-      }
-
-      ws.send(JSON.stringify(response.data || response));
-    } catch (error) {
-      console.error('Error forwarding request:', error.message);
-      if (error.response && error.response.data) {
-        ws.send(JSON.stringify(error.response.data));
-      } else {
-        ws.send(JSON.stringify({ error: 'Error processing request', details: error.message }));
-      }
-    }
-  };
-
-  const getServiceAddress = async (serviceName) => {
-    if (serviceAddressesCache[serviceName]) return serviceAddressesCache[serviceName];
-    const response = await axios.get(`http://localhost:4000/lookup/${serviceName}`);
-    const address = response.data.serviceAddress;
-    serviceAddressesCache[serviceName] = address;
-    return address;
-  };
-
-  const requiresAuthorization = (service, action) => {
-    const nonProtectedActions = {
-      battleship: ['status'],
-      profile: ['register', 'login', 'status'],
-      gateway: ['status'],
-      discovery: ['status']
-    };
-    return !nonProtectedActions[service]?.includes(action);
-  };
-
-  app.listen(port, () => {
-    console.log(`API Gateway running on port ${port}`);
-  });
 }).catch((err) => {
   console.error('Failed to connect Redis client:', err);
 });
+
