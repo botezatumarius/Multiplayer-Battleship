@@ -6,7 +6,7 @@ app.use(express.json());
 
 // Initialize Redis client
 const redisClient = Redis.createClient({
-    url: 'redis://localhost:6379'
+    url: 'redis://redis:6379'
   });
   
 

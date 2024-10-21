@@ -9,10 +9,7 @@ const port = 3000;
 // Object to cache service addresses
 const serviceAddressesCache = {};
 
-// Redis client for caching service addresses
-const redisClient = Redis.createClient({
-  url: 'redis://localhost:6379'
-});
+
 
 // Middleware
 app.use(express.json());
@@ -172,7 +169,7 @@ const handleProfileRequest = async (action, data, authHeader) => {
 // Function to discover and cache the service address
 const getServiceAddress = async (serviceName) => {
   if (serviceAddressesCache[serviceName]) return serviceAddressesCache[serviceName];
-  const response = await axios.get(`http://localhost:4000/lookup/${serviceName}`);
+  const response = await axios.get(`http://service-discovery:4000/lookup/${serviceName}`);
   const address = response.data.serviceAddress;
   serviceAddressesCache[serviceName] = address;
   return address;
@@ -189,17 +186,5 @@ const requiresAuthorization = (service, action) => {
   return !nonProtectedActions[service]?.includes(action);
 };
 
-// Redis client connection handling
-redisClient.on('connect', () => {});
 
-redisClient.on('error', (err) => {
-  console.log('Redis Client Error:', err);
-});
-
-// Explicitly connect the Redis client
-redisClient.connect().then(() => {
-  console.log('Redis client connected successfully');
-}).catch((err) => {
-  console.error('Failed to connect Redis client:', err);
-});
 

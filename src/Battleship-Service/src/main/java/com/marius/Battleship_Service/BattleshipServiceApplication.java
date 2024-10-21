@@ -1,6 +1,5 @@
 package com.marius.Battleship_Service;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -14,8 +13,8 @@ import java.util.Map;
 public class BattleshipServiceApplication {
 
 	private final String serviceName = "battleship";
-	private final String serviceAddress = "http://localhost:8081";
-	private final String serviceDiscoveryUrl = "http://localhost:4000/register";
+	private final String serviceAddress = "http://battleship-service:8081"; // Update to the service name
+	private final String serviceDiscoveryUrl = "http://service-discovery:4000/register"; // Update to the service name
 
 	public static void main(String[] args) {
 		SpringApplication.run(BattleshipServiceApplication.class, args);

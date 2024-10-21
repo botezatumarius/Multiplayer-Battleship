@@ -15,8 +15,8 @@ import java.util.Map;
 public class ProfileServiceApplication {
 
 	private final String serviceName = "profile";
-	private final String serviceAddress = "http://localhost:8082";
-	private final String serviceDiscoveryUrl = "http://localhost:4000/register";
+	private final String serviceAddress = "http://profile-service:8082"; // Update this to match the service name
+	private final String serviceDiscoveryUrl = "http://service-discovery:4000/register"; // Update to the service name
 
 	public static void main(String[] args) {
 		SpringApplication.run(ProfileServiceApplication.class, args);
