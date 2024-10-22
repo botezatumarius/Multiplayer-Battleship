@@ -7,8 +7,7 @@ app.use(express.json());
 // Initialize Redis client
 const redisClient = Redis.createClient({
     url: 'redis://redis:6379'
-  });
-  
+});
 
 // Handle Redis connection events
 redisClient.on('connect', () => {
@@ -39,8 +38,23 @@ app.post('/register', async (req, res) => {
   }
 
   try {
-    // Store the service address in Redis with the service name as the key
-    await redisClient.set(serviceName, serviceAddress);
+    // Check if the key exists
+    const keyExists = await redisClient.exists(serviceName);
+    
+    // If the key exists, check its type
+    if (keyExists) {
+      const type = await redisClient.type(serviceName);
+      if (type === 'string') {
+        // Delete the string key to allow for a list
+        await redisClient.del(serviceName);
+      } else if (type !== 'list') {
+        // If the type is not a list, handle the situation
+        return res.status(400).json({ error: `Key '${serviceName}' already exists and is of type '${type}'` });
+      }
+    }
+
+    // Initialize the key as a list and add the service address
+    await redisClient.rPush(serviceName, serviceAddress);
     res.status(200).json({ message: `${serviceName} registered successfully` });
   } catch (err) {
     res.status(500).json({ error: 'Failed to register service', details: err.message });
@@ -52,12 +66,12 @@ app.get('/lookup/:serviceName', async (req, res) => {
   const { serviceName } = req.params;
 
   try {
-    // Retrieve the service address from Redis
-    const serviceAddress = await redisClient.get(serviceName);
-    if (!serviceAddress) {
+    // Retrieve all service addresses from Redis
+    const serviceAddresses = await redisClient.lRange(serviceName, 0, -1);
+    if (serviceAddresses.length === 0) {
       return res.status(404).json({ error: 'Service not found' });
     }
-    res.status(200).json({ serviceAddress });
+    res.status(200).json({ serviceAddresses });
   } catch (err) {
     res.status(500).json({ error: 'Error looking up service', details: err.message });
   }

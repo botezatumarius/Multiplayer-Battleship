@@ -37,10 +37,10 @@ services:
     networks:
       - battleship-network
 
-  battleship-service:
+  battleship-service-1:
     build:
       context: ./Battleship-Service
-    container_name: Battleship-Service
+    container_name: Battleship-Service-1
     ports:
       - "8081:8081"
     depends_on:
@@ -49,20 +49,98 @@ services:
     networks:
       - battleship-network
     environment:
+      - SERVER_PORT=8081 
       - MONGO_HOST=mongodb
       - MONGO_PORT=27017
 
-  profile-service:
+  battleship-service-2:
     build:
-      context: ./Profile-Service
-    container_name: Profile-Service
+      context: ./Battleship-Service
+    container_name: Battleship-Service-2
     ports:
       - "8082:8082"
+    depends_on:
+      - service-discovery
+      - mongodb
+    networks:
+      - battleship-network
+    environment:
+      - SERVER_PORT=8082 
+      - MONGO_HOST=mongodb
+      - MONGO_PORT=27017
+
+  battleship-service-3:
+    build:
+      context: ./Battleship-Service
+    container_name: Battleship-Service-3
+    ports:
+      - "8083:8083"
+    depends_on:
+      - service-discovery
+      - mongodb
+    networks:
+      - battleship-network
+    environment:
+      - SERVER_PORT=8083 
+      - MONGO_HOST=mongodb
+      - MONGO_PORT=27017
+
+  profile-service-1:
+    build:
+      context: ./Profile-Service
+    container_name: Profile-Service-1
+    ports:
+      - "8084:8084"  
     depends_on:
       - service-discovery
       - postgres
     networks:
       - battleship-network
+    environment:
+      - SERVER_PORT=8084 
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=daniela
+
+  profile-service-2:
+    build:
+      context: ./Profile-Service
+    container_name: Profile-Service-2
+    ports:
+      - "8085:8085" 
+    depends_on:
+      - service-discovery
+      - postgres
+    networks:
+      - battleship-network
+    environment:
+      - SERVER_PORT=8085 
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=daniela
+
+  profile-service-3:
+    build:
+      context: ./Profile-Service
+    container_name: Profile-Service-3
+    ports:
+      - "8086:8086" 
+    depends_on:
+      - service-discovery
+      - postgres
+    networks:
+      - battleship-network
+    environment:
+      - SERVER_PORT=8086 
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=daniela
 
   mongodb:
     image: mongo:4.2
