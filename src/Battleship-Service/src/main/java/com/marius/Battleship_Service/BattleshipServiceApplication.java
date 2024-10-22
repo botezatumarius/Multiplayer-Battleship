@@ -4,12 +4,14 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.ComponentScan;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.HashMap;
 import java.util.Map;
 
 @SpringBootApplication
+@ComponentScan(basePackages = "com.marius.Battleship_Service")
 public class BattleshipServiceApplication {
 
 	private final String serviceName = "battleship";

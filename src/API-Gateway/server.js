@@ -1,7 +1,6 @@
 const express = require('express');
 const axios = require('axios');
 const Redis = require('redis');
-const WebSocket = require('ws');
 
 const app = express();
 const port = 3000;
@@ -9,35 +8,9 @@ const port = 3000;
 // Object to cache service addresses
 const serviceAddressesCache = {};
 
-
-
 // Middleware
 app.use(express.json());
 
-// WebSocket server setup
-const wss = new WebSocket.Server({ noServer: true });
-
-// Handle WebSocket connections
-wss.on('connection', (ws) => {
-  console.log('Client connected via WebSocket');
-
-  ws.on('message', async (message) => {
-    const parsedMessage = JSON.parse(message);
-    const { action, data, authHeader } = parsedMessage;
-
-    try {
-      const response = await handleBattleshipRequest(action, data, authHeader);
-      ws.send(JSON.stringify(response));
-    } catch (error) {
-      console.error('Error handling WebSocket message:', error.message);
-      ws.send(JSON.stringify({ error: 'Error processing request', details: error.message }));
-    }
-  });
-
-  ws.on('close', () => {
-    console.log('Client disconnected from WebSocket');
-  });
-});
 
 // Handle HTTP server upgrade to WebSocket
 app.server = app.listen(port, () => {
@@ -83,38 +56,6 @@ app.post('/auth/:action', (req, res) => {
     .catch(error => res.status(500).json({ error: error.message }));
 });
 
-// Function to handle the Battleship request forwarding
-const handleBattleshipRequest = async (action, data, authHeader) => {
-  try {
-    // Check if action requires authorization
-    const requiresAuth = requiresAuthorization('battleship', action);
-    if (requiresAuth && !authHeader) {
-      throw new Error('Authorization header is required');
-    }
-
-    const serviceAddress = await getServiceAddress('battleship');
-
-    let response;
-    if (action === 'status') {
-      // Handle status request as a GET request
-      response = await axios.get(`${serviceAddress}/status`, {
-        headers: requiresAuth ? { 'Authorization': authHeader } : {},
-        timeout: 5000
-      });
-    } else {
-      // Handle other actions as POST requests
-      response = await axios.post(`${serviceAddress}/game/${action}`, data, {
-        headers: requiresAuth ? { 'Authorization': authHeader } : {},
-        timeout: 5000
-      });
-    }
-
-    return response.data || response;
-  } catch (error) {
-    console.error('Error forwarding Battleship request:', error.message);
-    throw new Error('Error processing Battleship request');
-  }
-};
 
 
 // Function to handle all Profile service requests
