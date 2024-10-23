@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package servicediscovery;
+
+// Service definition for Service Discovery
+service ServiceDiscovery {
+    // RPC method to look up a service
+    rpc Lookup (LookupRequest) returns (LookupResponse);
+
+    // RPC method to check the status of the Service Discovery
+    rpc Status (StatusRequest) returns (StatusResponse);
+}
+
+// Request message for looking up a service
+message LookupRequest {
+    string service_name = 1;       // Name of the service to look up
+}
+
+// Response message for looking up a service
+message LookupResponse {
+    repeated string service_addresses = 1; // List of service addresses
+}
+
+// Request message for checking the status of the Service Discovery
+message StatusRequest {}
+
+// Response message for checking the status of the Service Discovery
+message StatusResponse {
+    string message = 1;            // Health message
+    string redis = 2;              // Status of Redis connection
+}

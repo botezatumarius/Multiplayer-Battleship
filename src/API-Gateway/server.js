@@ -1,9 +1,17 @@
 const express = require('express');
+const grpc = require('@grpc/grpc-js');
+const protoLoader = require('@grpc/proto-loader');
 const axios = require('axios');
-const Redis = require('redis');
 
 const app = express();
 const port = 3000;
+
+// Load gRPC service definition
+const packageDefinition = protoLoader.loadSync('service.proto', {});
+const proto = grpc.loadPackageDefinition(packageDefinition).servicediscovery;
+
+// Initialize gRPC client
+const serviceDiscoveryClient = new proto.ServiceDiscovery('service-discovery:50051', grpc.credentials.createInsecure());
 
 // Object to store round-robin indexes for services
 const roundRobinIndexes = {};
@@ -67,15 +75,11 @@ const getServiceAddress = async (serviceName) => {
   return modifiedServiceAddress; // Return the modified service address
 };
 
-
-
-// REST Endpoint: Get Profile Service status
+// gRPC Endpoint: Get Profile Service status
 app.get('/profile/status', async (req, res) => {
   try {
-    const serviceAddress = await getServiceAddress('profile');
-    console.log(serviceAddress)
+    const serviceAddress = await getServiceAddress('profile'); // Await the promise
     const response = await axios.get(`${serviceAddress}/status`, { timeout: 5000 });
-    
     res.json({ status: response.data });
   } catch (error) {
     console.error('Error checking Profile Service status:', error.message);
@@ -83,14 +87,14 @@ app.get('/profile/status', async (req, res) => {
   }
 });
 
-// REST Endpoint: Handle Profile Service requests (Round-Robin Load Balancing)
+// gRPC Endpoint: Handle Profile Service requests (Round-Robin Load Balancing)
 app.post('/auth/:action', async (req, res) => {
   const action = req.params.action;
   const data = req.body;
   const authHeader = req.headers.authorization;
 
   try {
-    const serviceAddress = await getServiceAddress('profile');
+    const serviceAddress = await getServiceAddress('profile'); // Await the promise
     let response;
 
     switch (action) {
@@ -126,7 +130,7 @@ app.post('/auth/:action', async (req, res) => {
 // WebSocket Endpoint: Get Battleship Service instance port (Round-Robin)
 app.get('/battleship/instance', async (req, res) => {
   try {
-    const serviceAddress = await getServiceAddress('battleship');
+    const serviceAddress = await getServiceAddress('battleship'); // Await the promise
     const instancePort = serviceAddress.split(':').pop();
     res.json({ instancePort });
   } catch (error) {
@@ -138,8 +142,12 @@ app.get('/battleship/instance', async (req, res) => {
 // Status check for Service Discovery
 app.get('/service-discovery/status', async (req, res) => {
   try {
-    const response = await axios.get(`http://service-discovery:4000/status`);
-    res.json({ discoveryStatus: response.data });
+    serviceDiscoveryClient.Status({}, (error, response) => {
+      if (error) {
+        throw error;
+      }
+      res.json({ discoveryStatus: response });
+    });
   } catch (error) {
     console.error('Error checking Service Discovery status:', error.message);
     res.status(500).json({ error: 'Error checking Service Discovery status' });

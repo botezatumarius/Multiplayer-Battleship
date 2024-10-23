@@ -1,15 +1,20 @@
 const express = require('express');
 const Redis = require('redis');
+const grpc = require('@grpc/grpc-js');
+const protoLoader = require('@grpc/proto-loader');
 
 const app = express();
 app.use(express.json());
+
+// Load gRPC service definition
+const packageDefinition = protoLoader.loadSync('service.proto', {});
+const proto = grpc.loadPackageDefinition(packageDefinition).servicediscovery;
 
 // Initialize Redis client
 const redisClient = Redis.createClient({
     url: 'redis://redis:6379'
 });
 
-// Handle Redis connection events
 redisClient.on('connect', () => {
   console.log('Connected to Redis for service discovery');
 });
@@ -18,18 +23,49 @@ redisClient.on('error', (err) => {
   console.log('Redis Client Error', err);
 });
 
-// Explicitly connect the Redis client
 redisClient.connect().then(() => {
   console.log('Redis client connected successfully');
 
-  // Start the server after Redis connects
-  const port = 4000;
-  app.listen(port, () => {
-    console.log(`Service Discovery running on port ${port}`);
+  // Start the gRPC server
+  const grpcServer = new grpc.Server();
+
+  grpcServer.addService(proto.ServiceDiscovery.service, {
+    Status: async (call, callback) => {
+      try {
+        const pingResponse = await redisClient.ping();
+        callback(null, { message: 'Service Discovery is healthy', redis: pingResponse });
+      } catch (err) {
+        callback({
+          code: grpc.status.INTERNAL,
+          details: 'Failed to communicate with Redis'
+        });
+      }
+    }
+  });
+
+  const port = 50051; // gRPC port
+  grpcServer.bindAsync(`0.0.0.0:${port}`, grpc.ServerCredentials.createInsecure(), () => {
+    console.log(`gRPC Service Discovery running on port ${port}`);
   });
 });
 
-// Register a new service
+// Lookup a service
+app.get('/lookup/:serviceName', async (req, res) => {
+  const { serviceName } = req.params;
+
+  try {
+    // Retrieve all service addresses from Redis
+    const serviceAddresses = await redisClient.lRange(serviceName, 0, -1);
+    if (serviceAddresses.length === 0) {
+      return res.status(404).json({ error: 'Service not found' });
+    }
+    res.status(200).json({ serviceAddresses });
+  } catch (err) {
+    res.status(500).json({ error: 'Error looking up service', details: err.message });
+  }
+});
+
+// HTTP Endpoint to register a new service
 app.post('/register', async (req, res) => {
   const { serviceName, serviceAddress } = req.body;
 
@@ -61,29 +97,10 @@ app.post('/register', async (req, res) => {
   }
 });
 
-// Lookup a service
-app.get('/lookup/:serviceName', async (req, res) => {
-  const { serviceName } = req.params;
 
-  try {
-    // Retrieve all service addresses from Redis
-    const serviceAddresses = await redisClient.lRange(serviceName, 0, -1);
-    if (serviceAddresses.length === 0) {
-      return res.status(404).json({ error: 'Service not found' });
-    }
-    res.status(200).json({ serviceAddresses });
-  } catch (err) {
-    res.status(500).json({ error: 'Error looking up service', details: err.message });
-  }
-});
 
-// Status check endpoint to verify if the service discovery is healthy
-app.get('/status', async (req, res) => {
-  try {
-    // Ping Redis to ensure it's healthy
-    const pingResponse = await redisClient.ping();
-    res.status(200).json({ message: 'Service Discovery is healthy', redis: pingResponse });
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to communicate with Redis', details: err.message });
-  }
+// Start the HTTP server
+const httpPort = 4000; // HTTP port
+app.listen(httpPort, () => {
+  console.log(`Service Discovery HTTP server running on port ${httpPort}`);
 });
