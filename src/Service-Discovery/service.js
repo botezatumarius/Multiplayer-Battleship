@@ -2,6 +2,7 @@ const express = require('express');
 const Redis = require('redis');
 const grpc = require('@grpc/grpc-js');
 const protoLoader = require('@grpc/proto-loader');
+const axios = require('axios'); // We'll use axios to ping services
 
 const app = express();
 app.use(express.json());
@@ -47,7 +48,50 @@ redisClient.connect().then(() => {
   grpcServer.bindAsync(`0.0.0.0:${port}`, grpc.ServerCredentials.createInsecure(), () => {
     console.log(`gRPC Service Discovery running on port ${port}`);
   });
+
+  // Start the periodic health check of services
+  startServiceHealthChecks();
 });
+
+// Function to ping all registered services
+const startServiceHealthChecks = () => {
+  // Periodically ping services every 10 seconds
+  setInterval(async () => {
+    try {
+      console.log("\nHEALTH CHECK:")
+      // Get all service names (keys) from Redis
+      const serviceNames = await redisClient.keys('*');
+
+      // For each service, get its addresses and ping them
+      for (const serviceName of serviceNames) {
+        const serviceAddresses = await redisClient.lRange(serviceName, 0, -1);
+        
+        // Ping each address in the list
+        for (const serviceAddress of serviceAddresses) {
+          let modifiedServiceAddress = serviceAddress; 
+          try {
+          const portMatch = serviceAddress.match(/:(\d+)$/);
+          if (portMatch) {
+            const port = portMatch[1]; 
+            const lastDigit = port.charAt(port.length - 1); 
+            const modValue = Math.abs(lastDigit - 3) || 1; 
+            const [protocol,addressName,portNum] = serviceAddress.split(':')
+            if (serviceName == "profile") {
+              modifiedServiceAddress = `${protocol}:${addressName}-${modValue}:${portNum}`;
+            } else modifiedServiceAddress = `${protocol}:${addressName}-${lastDigit}:${portNum}`;
+          }
+            const response = await axios.get(`${modifiedServiceAddress}/status`);
+            console.log(`Service ${serviceName} at ${modifiedServiceAddress} is alive. Status: ${response.status}`);
+          } catch (error) {
+            console.error(`Service ${serviceName} at ${modifiedServiceAddress} is down. Error: ${error.message}`);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error retrieving services from Redis:', error);
+    }
+  }, 20000); // 20-second interval
+};
 
 // Lookup a service
 app.get('/lookup/:serviceName', async (req, res) => {
@@ -96,8 +140,6 @@ app.post('/register', async (req, res) => {
     res.status(500).json({ error: 'Failed to register service', details: err.message });
   }
 });
-
-
 
 // Start the HTTP server
 const httpPort = 4000; // HTTP port

@@ -62,8 +62,9 @@ const getServiceAddress = async (serviceName) => {
     const lastDigit = port.charAt(port.length - 1); // Get the last digit of the port
     const modValue = Math.abs(lastDigit - 3) || 1; // Calculate last digit mod 3
     const [protocol,addressName,portNum] = serviceAddress.split(':')
-    const modifiedServiceName = `${protocol}:${addressName}-${modValue}:${portNum}`;
-    modifiedServiceAddress = `${modifiedServiceName}`;
+    if (serviceName == "profile") {
+      modifiedServiceAddress = `${protocol}:${addressName}-${modValue}:${portNum}`;
+    } else modifiedServiceAddress = `${protocol}:${addressName}-${lastDigit}:${portNum}`;
   }
 
   // Update round-robin index for the next request
@@ -84,6 +85,18 @@ app.get('/profile/status', async (req, res) => {
   } catch (error) {
     console.error('Error checking Profile Service status:', error.message);
     res.status(500).json({ error: 'Error checking Profile Service status' });
+  }
+});
+
+// gRPC Endpoint: Get Battleship Service status
+app.get('/battleship/status', async (req, res) => {
+  try {
+    const serviceAddress = await getServiceAddress('battleship'); // Await the promise
+    const response = await axios.get(`${serviceAddress}/status`, { timeout: 5000 });
+    res.json({ status: response.data });
+  } catch (error) {
+    console.error('Error checking Battleship Service status:', error.message);
+    res.status(500).json({ error: 'Error checking Battleship Service status' });
   }
 });
 
