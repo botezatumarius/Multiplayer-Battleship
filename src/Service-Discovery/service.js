@@ -2,7 +2,7 @@ const express = require('express');
 const Redis = require('redis');
 const grpc = require('@grpc/grpc-js');
 const protoLoader = require('@grpc/proto-loader');
-const axios = require('axios'); // We'll use axios to ping services
+const axios = require('axios'); 
 
 const app = express();
 app.use(express.json());
@@ -98,16 +98,23 @@ app.get('/lookup/:serviceName', async (req, res) => {
   const { serviceName } = req.params;
 
   try {
-    // Retrieve all service addresses from Redis
-    const serviceAddresses = await redisClient.lRange(serviceName, 0, -1);
-    if (serviceAddresses.length === 0) {
+    // Check if the serviceName exists in Redis
+    const keyExists = await redisClient.exists(serviceName);
+    
+    if (!keyExists) {
       return res.status(404).json({ error: 'Service not found' });
     }
+
+    // Retrieve all service addresses from Redis
+    const serviceAddresses = await redisClient.lRange(serviceName, 0, -1);
+    
+    // Respond with the retrieved addresses
     res.status(200).json({ serviceAddresses });
   } catch (err) {
     res.status(500).json({ error: 'Error looking up service', details: err.message });
   }
 });
+
 
 // HTTP Endpoint to register a new service
 app.post('/register', async (req, res) => {
@@ -143,6 +150,11 @@ app.post('/register', async (req, res) => {
 
 // Start the HTTP server
 const httpPort = 4000; // HTTP port
-app.listen(httpPort, () => {
-  console.log(`Service Discovery HTTP server running on port ${httpPort}`);
-});
+const startHttpServer = () => {
+  app.listen(httpPort, () => {
+    console.log(`Service Discovery HTTP server running on port ${httpPort}`);
+  });
+};
+
+// Export the app and start the HTTP server
+module.exports = app;

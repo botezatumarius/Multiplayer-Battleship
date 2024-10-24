@@ -9,7 +9,7 @@ let requestCount = 0; // Track number of requests per second
 const threshold = 1; // Set threshold for critical load
 const resetInterval = 1000; // Reset request counter every second
 const retryLimit = 3; // Circuit breaker threshold for failures
-const taskTimeoutLimit = 1; // Timeout for task requests
+const taskTimeoutLimit = 5000; // Timeout for task requests
 
 // Store retry counts for requests
 const retryCounts = {};
