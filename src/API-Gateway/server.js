@@ -2,13 +2,18 @@ const express = require('express');
 const grpc = require('@grpc/grpc-js');
 const protoLoader = require('@grpc/proto-loader');
 const axios = require('axios');
-
 const app = express();
 const port = 3000;
 
 let requestCount = 0; // Track number of requests per second
 const threshold = 1; // Set threshold for critical load
 const resetInterval = 1000; // Reset request counter every second
+const retryLimit = 3; // Circuit breaker threshold for failures
+const taskTimeoutLimit = 1; // Timeout for task requests
+
+// Store retry counts for requests
+const retryCounts = {};
+const circuitBreakerTimeouts = {}; // Store circuit breaker open time
 
 // Load gRPC service definition
 const packageDefinition = protoLoader.loadSync('service.proto', {});
@@ -42,15 +47,60 @@ app.use((req, res, next) => {
   next();
 });
 
-// Root route
-app.get('/', (req, res) => {
-  res.send('Welcome to the Battleship API Gateway!');
-});
-
 // API Gateway status check
 app.get('/status', (req, res) => {
   res.sendStatus(200);
 });
+
+// Circuit breaker implementation with 15-second reset 
+const circuitBreaker = async (serviceAddress, reqConfig) => {
+  const circuitBreakerTimeout = 15000; 
+
+  if (!retryCounts[serviceAddress]) {
+    retryCounts[serviceAddress] = 0;
+  }
+
+  // Check if the circuit breaker is open
+  if (circuitBreakerTimeouts[serviceAddress]) {
+    const elapsedTime = Date.now() - circuitBreakerTimeouts[serviceAddress];
+    if (elapsedTime < circuitBreakerTimeout) {
+      console.warn(`Circuit breaker is open for service: ${serviceAddress}. Skipping request.`);
+      return null; 
+    } else {
+      // Reset circuit breaker after 15 seconds
+      retryCounts[serviceAddress] = 0;
+      delete circuitBreakerTimeouts[serviceAddress]; 
+    }
+  }
+
+  // Retry logic for service request
+  while (retryCounts[serviceAddress] < retryLimit) {
+    try {
+      const response = await axios(reqConfig);
+      retryCounts[serviceAddress] = 0; 
+      return response;
+    } catch (error) {
+      console.error(`Error on attempt ${retryCounts[serviceAddress] + 1} for service ${serviceAddress}:`, error.message);
+      retryCounts[serviceAddress]++;
+
+      if (retryCounts[serviceAddress] >= retryLimit) {
+        console.error(`Circuit breaker triggered for service: ${serviceAddress}. Service is considered failed.`);
+        circuitBreakerTimeouts[serviceAddress] = Date.now(); // Open the circuit breaker
+
+        // Set a timeout to log the reset message after 15 seconds
+        setTimeout(() => {
+          retryCounts[serviceAddress] = 0; 
+          console.log(`Circuit breaker for service: ${serviceAddress} has been reset after 15 seconds.`);
+        }, circuitBreakerTimeout);
+
+        return null; // Return null if the service fails 3 times
+      }
+    }
+  }
+
+  return null;
+};
+
 
 // Round-Robin Load Balancing for Profile Service
 const getServiceAddress = async (serviceName) => {
@@ -94,8 +144,16 @@ const getServiceAddress = async (serviceName) => {
 app.get('/profile/status', async (req, res) => {
   try {
     const serviceAddress = await getServiceAddress('profile');
-    const response = await axios.get(`${serviceAddress}/status`, { timeout: 5000 });
-    res.json({ status: response.data });
+    const response = await circuitBreaker(serviceAddress, {
+      url: `${serviceAddress}/status`,
+      method: 'get',
+      timeout: taskTimeoutLimit
+    });
+    if (!response) {
+      res.status(503).json({ error: 'Profile Service is temporarily unavailable' });
+    } else {
+      res.json({ status: response.data });
+    }
   } catch (error) {
     console.error('Error checking Profile Service status:', error.message);
     res.status(500).json({ error: 'Error checking Profile Service status' });
@@ -106,8 +164,16 @@ app.get('/profile/status', async (req, res) => {
 app.get('/battleship/status', async (req, res) => {
   try {
     const serviceAddress = await getServiceAddress('battleship');
-    const response = await axios.get(`${serviceAddress}/status`, { timeout: 5000 });
-    res.json({ status: response.data });
+    const response = await circuitBreaker(serviceAddress, {
+      url: `${serviceAddress}/status`,
+      method: 'get',
+      timeout: taskTimeoutLimit
+    });
+    if (!response) {
+      res.status(503).json({ error: 'Battleship Service is temporarily unavailable' });
+    } else {
+      res.json({ status: response.data });
+    }
   } catch (error) {
     console.error('Error checking Battleship Service status:', error.message);
     res.status(500).json({ error: 'Error checking Battleship Service status' });
@@ -122,32 +188,42 @@ app.post('/auth/:action', async (req, res) => {
 
   try {
     const serviceAddress = await getServiceAddress('profile');
-    let response;
+    let reqConfig;
 
     switch (action) {
       case 'register':
-        response = await axios.post(`${serviceAddress}/auth/register`, data, { timeout: 5000 });
+        reqConfig = { url: `${serviceAddress}/auth/register`, method: 'post', data, timeout: taskTimeoutLimit };
         break;
       case 'login':
-        response = await axios.post(`${serviceAddress}/auth/login`, data, { timeout: 5000 });
+        reqConfig = { url: `${serviceAddress}/auth/login`, method: 'post', data, timeout: taskTimeoutLimit };
         break;
       case 'profile':
-        response = await axios.get(`${serviceAddress}/auth/profile`, {
+        reqConfig = {
+          url: `${serviceAddress}/auth/profile`,
+          method: 'get',
           headers: { Authorization: authHeader },
-          timeout: 5000,
-        });
+          timeout: taskTimeoutLimit,
+        };
         break;
       case 'update-stats':
-        response = await axios.post(`${serviceAddress}/update-stats`, data, {
+        reqConfig = {
+          url: `${serviceAddress}/update-stats`,
+          method: 'post',
+          data,
           headers: { Authorization: authHeader },
-          timeout: 5000,
-        });
+          timeout: taskTimeoutLimit,
+        };
         break;
       default:
         throw new Error('Unsupported action for Profile service');
     }
 
-    res.json(response.data);
+    const response = await circuitBreaker(serviceAddress, reqConfig);
+    if (!response) {
+      res.status(503).json({ error: 'Profile Service is temporarily unavailable' });
+    } else {
+      res.json(response.data);
+    }
   } catch (error) {
     console.error('Error forwarding Profile request:', error.message);
     res.status(500).json({ error: 'Error processing Profile request' });
