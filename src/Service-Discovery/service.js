@@ -156,5 +156,7 @@ const startHttpServer = () => {
   });
 };
 
+startHttpServer();
+
 // Export the app and start the HTTP server
 module.exports = app;

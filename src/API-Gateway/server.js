@@ -6,10 +6,12 @@ const app = express();
 const port = 3000;
 
 let requestCount = 0; // Track number of requests per second
-const threshold = 1; // Set threshold for critical load
+const threshold = 1; // Threshold for critical load
 const resetInterval = 1000; // Reset request counter every second
 const retryLimit = 3; // Circuit breaker threshold for failures
 const taskTimeoutLimit = 5000; // Timeout for task requests
+let concurrentTasks = 0; // Number of concurrent tasks
+const concurrentTaskLimit = 10; // Maximum number of concurrent tasks allowed
 
 // Store retry counts for requests
 const retryCounts = {};
@@ -28,7 +30,6 @@ const roundRobinIndexes = {};
 // Middleware
 app.use(express.json());
 
-// Handle HTTP server upgrade to WebSocket
 app.server = app.listen(port, () => {
   console.log(`API Gateway running on port ${port}`);
 });
@@ -41,10 +42,18 @@ setInterval(() => {
   requestCount = 0; // Reset the counter
 }, resetInterval);
 
-// Middleware to track incoming requests
-app.use((req, res, next) => {
-  requestCount++; // Increment request count for each incoming request
-  next();
+// Middleware to enforce concurrency limit
+app.use(async (req, res, next) => {
+  if (concurrentTasks >= concurrentTaskLimit) {
+    return res.status(429).json({ error: 'Too many requests - concurrency limit reached' });
+  }
+  requestCount++;
+  concurrentTasks++; // Increment task count
+  try {
+    next(); // Proceed with request
+  } finally {
+    concurrentTasks--; // Decrement task count when request completes
+  }
 });
 
 // API Gateway status check
@@ -54,7 +63,7 @@ app.get('/status', (req, res) => {
 
 // Circuit breaker implementation with 15-second reset 
 const circuitBreaker = async (serviceAddress, reqConfig) => {
-  const circuitBreakerTimeout = 15000; 
+  const circuitBreakerTimeout = 60000; 
 
   if (!retryCounts[serviceAddress]) {
     retryCounts[serviceAddress] = 0;
@@ -67,7 +76,7 @@ const circuitBreaker = async (serviceAddress, reqConfig) => {
       console.warn(`Circuit breaker is open for service: ${serviceAddress}. Skipping request.`);
       return null; 
     } else {
-      // Reset circuit breaker after 15 seconds
+      // Reset circuit breaker after 60 seconds
       retryCounts[serviceAddress] = 0;
       delete circuitBreakerTimeouts[serviceAddress]; 
     }
@@ -87,10 +96,10 @@ const circuitBreaker = async (serviceAddress, reqConfig) => {
         console.error(`Circuit breaker triggered for service: ${serviceAddress}. Service is considered failed.`);
         circuitBreakerTimeouts[serviceAddress] = Date.now(); // Open the circuit breaker
 
-        // Set a timeout to log the reset message after 15 seconds
+        //Set a timeout to log the reset message after 60 seconds
         setTimeout(() => {
           retryCounts[serviceAddress] = 0; 
-          console.log(`Circuit breaker for service: ${serviceAddress} has been reset after 15 seconds.`);
+          console.log(`Circuit breaker for service: ${serviceAddress} has been reset after 60 seconds.`);
         }, circuitBreakerTimeout);
 
         return null; // Return null if the service fails 3 times
