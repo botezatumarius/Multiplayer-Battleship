@@ -11,7 +11,7 @@ const resetInterval = 1000; // Reset request counter every second
 const retryLimit = 3; // Circuit breaker threshold for failures
 const taskTimeoutLimit = 5000; // Timeout for task requests
 let concurrentTasks = 0; // Number of concurrent tasks
-const concurrentTaskLimit = 10; // Maximum number of concurrent tasks allowed
+const concurrentTaskLimit = 1; // Maximum number of concurrent tasks allowed
 
 // Store retry counts for requests
 const retryCounts = {};

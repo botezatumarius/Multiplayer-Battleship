@@ -35,6 +35,45 @@ public class GameService {
         return Optional.empty();
     }
 
+    public Optional<Boolean> isPlayerInGame(String playerId) {
+        boolean inGame = gameRepository.findAll().stream()
+                .anyMatch(game -> (game.getPlayer1Id() != null && game.getPlayer1Id().equals(playerId)) ||
+                        (game.getPlayer2Id() != null && game.getPlayer2Id().equals(playerId)));
+        return Optional.of(inGame);
+    }
+
+    public String getCurrentGameId(String playerId) {
+        return gameRepository.findAll().stream()
+                .filter(game -> (game.getPlayer1Id() != null && game.getPlayer1Id().equals(playerId)) ||
+                        (game.getPlayer2Id() != null && game.getPlayer2Id().equals(playerId)))
+                .map(Game::getId)
+                .findFirst()
+                .orElse(null); // Returns null if no game is found
+    }
+
+    public Optional<Game> leaveGame(String gameId, String playerId) {
+        Optional<Game> gameOptional = gameRepository.findById(gameId);
+        if (gameOptional.isPresent()) {
+            Game game = gameOptional.get();
+
+            if (playerId.equals(game.getPlayer1Id())) {
+                game.setStatus("finished");
+                game.setPlayer1Id(null);
+                game.setPlayer1Grid(null);
+                game.setPlayer2Grid(null);
+
+            } else if (playerId.equals(game.getPlayer2Id())) {
+                game.setStatus("waiting_for_opponent");
+                game.setPlayer2Id(null);
+                game.setPlayer2Grid(null);
+            }
+
+            gameRepository.save(game);
+            return Optional.of(game);
+        }
+        return Optional.empty();
+    }
+
     public Optional<Game> getGame(String gameId) {
         return gameRepository.findById(gameId);
     }
@@ -96,5 +135,18 @@ public class GameService {
             }
         }
         return true; // No overlap, can place ship
+    }
+
+    public void removeGame(String gameId) {
+        if (gameId == null || gameId.isEmpty()) {
+            throw new IllegalArgumentException("Game ID must not be null or empty");
+        }
+
+        // Optional: Check if the game exists before trying to delete
+        if (!gameRepository.existsById(gameId)) {
+            throw new IllegalArgumentException("Game not found with ID: " + gameId);
+        }
+
+        gameRepository.deleteById(gameId);
     }
 }
