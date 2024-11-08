@@ -102,7 +102,7 @@ The ETL service loads the consolidated and transformed data into a centralized d
 3. Profile Service
    - Language: Java
    - Database: PostgreSQL
-4. Service Service
+4. Service Discovery
    - Language: Javascript (Node.js)
    - Caching: Redis
 5. ETL Service
