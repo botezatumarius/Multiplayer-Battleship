@@ -31,7 +31,7 @@ Real-world examples of projects that are similar and employ microservices:
 Architecture diagram:
 
 <p align="center">
-  <img src="assets/architecture_diagram.png" alt="Simple overview">
+  <img src="assets/architecture_diagram2.png" alt="Simple overview">
 </p>
 
 ### API Gateway
@@ -40,7 +40,6 @@ The API Gateway is the entry point for all client requests and performs several 
 
 - **Routing**: Directs incoming requests to the appropriate microservice based on the request URL and method.
 - **Load Balancing**: Distributes incoming traffic across multiple instances of microservices to ensure even load and high availability.
-- **Caching**: Uses Redis to store frequently accessed data, such as the JWT validation token and user profile information.
 - **WebSocket Management**: Establishes and manages WebSocket connections for real-time communication between clients and the services.
 - **Service Discovery**: Integrates with a service registry to discover and route requests to the available instances of microservices.
 
@@ -58,69 +57,63 @@ The Profile Service handles user-related functionality and data management, incl
 - **Authentication & Registration**: Manages user authentication, registration, and login processes.
 - **Score Tracking**: Tracks and updates user scores and game history, communicating with the Battleship Service via gRPC to synchronize game-related data.
 
+### Service Discovery
+
+Handles the microservice discovery process, including:
+
+- **Registering**: Registers service names to their respective service addresses.
+- **Health Checks**: Periodically pings the services it has registered to see if they are still alive.
+- **Caching**: Caches the service names and their addresses in redis.
+
+### Prometheus
+
+Collects time-series metrics from the Battleship game microservices and API Gateway, including:
+
+- **API Gateway Monitoring**: Collects metrics on incoming request counts, response times, request errors, and overall traffic through the API Gateway, giving insights into load and performance.
+- **Service-Specific Metrics**: Monitors each microservice individually (Battleship and Profile services) for metrics like CPU usage, memory utilization, and request counts.
+
+### Grafana
+
+Provides real-time visualization for all aspects of the Battleship multiplayer game that Prometheus collects.
+
+### ETL Service
+
+The ETL (Extract, Transform, Load) service for the Battleship multiplayer game would consolidate and transform data from the two primary services, the Battleship Service and the Profile Service, which use different databases (MongoDB and PostgreSQL respectively).
+
+#### Extract
+
+The ETL service retrieves data from the two distinct databases.
+
+#### Transform
+
+In the transform phase, the ETL service cleans, structures, and aggregates the data, preparing it for analytics or reporting.
+
+#### Load
+
+The ETL service loads the consolidated and transformed data into a centralized datastore, a data warehouse. This enables efficient querying and analysis.
+
 ### Technology stack
 
 1. API Gateway
    - Language: Javascript (Node.js)
-   - Caching: Redis
 2. Battleship Service
    - Language: Java
    - Database: MongoDB
 3. Profile Service
    - Language: Java
    - Database: PostgreSQL
+4. Service Service
+   - Language: Javascript (Node.js)
+   - Caching: Redis
+5. ETL Service
+   - Language: Javascript (Node.js)
+6. Monitoring & Logging: Grafana + Prometheus
 
 ### Communication patterns
 
-REST will be used for client-API Gateway communication due to its simplicity and broad compatibility for standard API interactions, while WebSockets handle real-time updates and bidirectional communication essential for live gameplay. gRPC will be used for service-to-service communication because it offers high performance with low latency, efficient binary serialization which is ideal for complex, high-throughput interactions between microservices.
+REST will be used for client-API Gateway communication due to its simplicity and broad compatibility for standard API interactions, while WebSockets handle real-time updates and bidirectional communication essential for live gameplay. gRPC will be used for battleship service to profile service communication as well as for communication between the api gateway and service discovery.
 
 ### Data Management
-
-All components will have a maximum duration a request or task can take before it is automatically terminated or fails.
-
-- **API Gateway**:
-
-A timeout of 30 seconds for a standard request-response cycle.
-
-```json
-{
-  "timeout": 30
-}
-```
-
-- **Microservice**:
-
-A service handling game logic might have a 10-second timeout for complex game state updates.
-
-```json
-{
-  "gameLogicTimeout": 10
-}
-```
-
-- **Database Query**:
-
-A database query fetching a user profile might have a 5-second timeout.
-
-```json
-{
-  "queryTimeout": 5
-}
-```
-
-### Limits to concurrent tasks
-
-- **API Gateway**:
-
-Limits the number of concurrent requests it can process. If the limit is 100, the API gateway will only allow 100 requests at a time and queue or reject additional requests until some tasks are completed.
-
-- **Microservice Task Processing**:
-
-A microservice handling game logic might process only 10 player moves at a time.
-
-- **Database connection pooling**:
-
-A database will have a limit on how many connections can be active concurrently. For instance, only 20 connections are allowed at the same time to avoid overloading the database.
 
 ## 1. Profile Service (User Authentication and Management)
 
@@ -137,7 +130,7 @@ A database will have a limit on how many connections can be active concurrently.
   }
   ```
 
-  - **Response (success)**:
+  - **Response 200 OK (success)**:
 
   ```json
   {
@@ -146,7 +139,7 @@ A database will have a limit on how many connections can be active concurrently.
   }
   ```
 
-  - **Response (error)**:
+  - **Response 409 (conflict)**:
 
   ```json
   {
@@ -167,7 +160,7 @@ A database will have a limit on how many connections can be active concurrently.
   }
   ```
 
-  - **Response (success)**:
+  - **Response 200 OK (success)**:
 
   ```json
   {
@@ -176,7 +169,7 @@ A database will have a limit on how many connections can be active concurrently.
   }
   ```
 
-  - **Response (error)**:
+  - **Response 401 (unauthorized error)**:
 
   ```json
   {
@@ -195,7 +188,7 @@ A database will have a limit on how many connections can be active concurrently.
   }
   ```
 
-  - **Response**:
+  - **Response 200 OK (success)**:
 
   ```json
   {
@@ -207,9 +200,32 @@ A database will have a limit on how many connections can be active concurrently.
   }
   ```
 
+  - **Response 401 Unauthorized (error)**:
+
+  ```json
+  {
+    "error": "Authentication failed. Invalid or missing token."
+  }
+  ```
+
+  - **Response 403 Forbidden (error)**:
+
+  ```json
+  {
+    "error": "Access denied. You do not have permission to view this profile."
+  }
+  ```
+
 #### 1.4 POST /auth/update-profile
 
 - **Description**: Updates the user profile based on game results (e.g., win/loss).
+- **Headers**:
+
+  ```json
+  {
+    "Authorization": "Bearer jwt_token"
+  }
+  ```
 
   - **Request**:
 
@@ -220,7 +236,7 @@ A database will have a limit on how many connections can be active concurrently.
   }
   ```
 
-  - **Response**:
+  - **Response 200 OK (success)**:
 
   ```json
   {
@@ -231,17 +247,31 @@ A database will have a limit on how many connections can be active concurrently.
   }
   ```
 
+  - **Response 404 Not Found (error)**:
+
+  ```json
+  {
+    "error": "User not found."
+  }
+  ```
+
 #### 1.5 GET /auth/status
 
 - **Description**: Gives the status of the microservice.
 
-- **Response**:
+- **Response 200 OK (success)**:
 
   ```json
   {
-    "status": "ok",
-    "uptime": "2h 15m",
-    "timestamp": "2024-09-17T10:15:30Z"
+    "status": "ok"
+  }
+  ```
+
+- **Response 503 Service Unavailable (error)**:
+
+  ```json
+  {
+    "error": "Service temporarily unavailable. Please try again later."
   }
   ```
 
@@ -267,7 +297,7 @@ A database will have a limit on how many connections can be active concurrently.
   }
   ```
 
-  - **Response**:
+  - **Response 200 OK (success)**:
 
   ```json
   {
@@ -283,6 +313,22 @@ A database will have a limit on how many connections can be active concurrently.
     },
     "grid_size": 10,
     "status": "waiting_for_opponent"
+  }
+  ```
+
+  - **Response 400 Bad Request (error)**:
+
+  ```json
+  {
+    "error": "User already in a game. Please leave the current game before creating a new one."
+  }
+  ```
+
+  - **Response 404 Not Found (error)**:
+
+  ```json
+  {
+    "error": "Player not found."
   }
   ```
 
@@ -307,7 +353,7 @@ A database will have a limit on how many connections can be active concurrently.
   }
   ```
 
-  - **Response**:
+  - **Response 200 OK (success)**:
 
   ```json
   {
@@ -326,32 +372,23 @@ A database will have a limit on how many connections can be active concurrently.
   }
   ```
 
-#### 2.3 POST /game/attack
-
-- **Description**: Player sends attack coordinates to attack an opponent’s grid.
-
-- **Headers**:
+- **Response 403 Forbidden (error)**:
 
   ```json
   {
-    "Authorization": "Bearer jwt_token"
+    "error": "Player is already part of a game. Leave before joining a new one."
   }
   ```
 
-  - **Request**:
+- **Response 404 Not Found (error)**:
 
   ```json
   {
-    "game_id": "string",
-    "attacker_id": "string",
-    "coordinates": {
-      "x": 5,
-      "y": 3
-    }
+    "error": "Game not found."
   }
   ```
 
-#### 2.4 POST /game/leave
+#### 2.3 POST /game/leave
 
 - **Description**: A player leaves an ongoing game.
 
@@ -372,7 +409,7 @@ A database will have a limit on how many connections can be active concurrently.
   }
   ```
 
-  - **Response (for player leaving)**:
+  - **Response 200 OK (success)**:
 
   ```json
   {
@@ -381,26 +418,31 @@ A database will have a limit on how many connections can be active concurrently.
   }
   ```
 
-  - **Response (for remaining player)**:
+  - **Response 404 Not Found (error)**:
 
   ```json
   {
-    "message": "Opponent has left the game.",
-    "status": "game_abandoned"
+    "error": "Game not found."
   }
   ```
 
-#### 2.5 GET /game/status
+#### 2.4 GET /game/status
 
 - **Description**: Gives the status of the microservice.
 
-- **Response**:
+- **Response 200 OK (success)**:
 
   ```json
   {
-    "status": "ok",
-    "uptime": "2h 15m",
-    "timestamp": "2024-09-17T10:15:30Z"
+    "status": "ok"
+  }
+  ```
+
+- **Response 503 Service Unavailable (error)**:
+
+  ```json
+  {
+    "error": "Service temporarily unavailable. Please try again later."
   }
   ```
 
@@ -469,3 +511,7 @@ A database will have a limit on how many connections can be active concurrently.
 ### Deployment and Scaling
 
 Each component, such as the two microservices, API Gateway, service discovery, Redis, and the databases, will have its own Docker image. These images will be used to create and run containers, which can be deployed and scaled independently. Docker Compose can manage these containers, ensuring they can communicate with each other as required. Docker handles the networking and communication between containers, allowing for flexible scaling and deployment.
+
+### Run/test the project
+
+To test the project locally git clone the project, change directory to src, since that is where `docker-compose.yml` file is located, and run `docker-compose up --build`. The services register themselves to Service Discovery when they're up and log a successfull registration message if no issues were encountered. The API Gateway synchronizes with the Service Discovery when it needs the address of a service it wants to forward a request to. The endpoints are located in `pad1.postman_collection.json`, they can be imported in postman and tested.
