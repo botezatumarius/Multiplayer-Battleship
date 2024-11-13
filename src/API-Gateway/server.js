@@ -61,53 +61,63 @@ app.get('/status', (req, res) => {
   res.sendStatus(200);
 });
 
-// Circuit breaker implementation with 15-second reset 
-const circuitBreaker = async (serviceAddress, reqConfig) => {
-  const circuitBreakerTimeout = 60000; 
+// Circuit breaker implementation with 60-second reset 
+const circuitBreaker = async (initialServiceName, reqConfig) => {
+  const circuitBreakerTimeout = 60000;
+  const maxInstances = 3; // Limit to a maximum of 3 instances
+  let instanceAttempts = 0;
 
-  if (!retryCounts[serviceAddress]) {
-    retryCounts[serviceAddress] = 0;
-  }
-
-  // Check if the circuit breaker is open
-  if (circuitBreakerTimeouts[serviceAddress]) {
-    const elapsedTime = Date.now() - circuitBreakerTimeouts[serviceAddress];
-    if (elapsedTime < circuitBreakerTimeout) {
-      console.warn(`Circuit breaker is open for service: ${serviceAddress}. Skipping request.`);
-      return null; 
-    } else {
-      // Reset circuit breaker after 60 seconds
-      retryCounts[serviceAddress] = 0;
-      delete circuitBreakerTimeouts[serviceAddress]; 
-    }
-  }
-
-  // Retry logic for service request
-  while (retryCounts[serviceAddress] < retryLimit) {
+  while (instanceAttempts < maxInstances) {
+    // Get the next service address
+    let serviceAddress;
     try {
-      const response = await axios(reqConfig);
-      retryCounts[serviceAddress] = 0; 
-      return response;
+      serviceAddress = await getServiceAddress(initialServiceName);
+
+      if (circuitBreakerTimeouts[serviceAddress]) {
+        const elapsedTime = Date.now() - circuitBreakerTimeouts[serviceAddress];
+        if (elapsedTime < circuitBreakerTimeout) {
+          console.warn(`Circuit breaker is open for service: ${serviceAddress}. Skipping this instance.`);
+          instanceAttempts++;
+          continue; // Go to the next instance
+        } else {
+          retryCounts[serviceAddress] = 0;
+          delete circuitBreakerTimeouts[serviceAddress];
+        }
+      }
+
+      console.log(`Attempting request on service instance: ${serviceAddress}`);
     } catch (error) {
-      console.error(`Error on attempt ${retryCounts[serviceAddress] + 1} for service ${serviceAddress}:`, error.message);
-      retryCounts[serviceAddress]++;
+      console.error(`Failed to get service address for ${initialServiceName}:`, error.message);
+      return null;
+    }
 
-      if (retryCounts[serviceAddress] >= retryLimit) {
-        console.error(`Circuit breaker triggered for service: ${serviceAddress}. Service is considered failed.`);
-        circuitBreakerTimeouts[serviceAddress] = Date.now(); // Open the circuit breaker
+    if (!retryCounts[serviceAddress]) {
+      retryCounts[serviceAddress] = 0;
+    }
 
-        //Set a timeout to log the reset message after 60 seconds
-        setTimeout(() => {
-          retryCounts[serviceAddress] = 0; 
-          console.log(`Circuit breaker for service: ${serviceAddress} has been reset after 60 seconds.`);
-        }, circuitBreakerTimeout);
+    // Retry loop for the current instance
+    while (retryCounts[serviceAddress] < retryLimit) {
+      try {
+        const response = await axios({ ...reqConfig, url: `${serviceAddress}${reqConfig.url}` });
+        retryCounts[serviceAddress] = 0; 
+        return response; // Successful response
+      } catch (error) {
+        console.error(`Error on attempt ${retryCounts[serviceAddress] + 1} for service ${serviceAddress}:`, error.message);
+        retryCounts[serviceAddress]++;
 
-        return null; // Return null if the service fails 3 times
+        if (retryCounts[serviceAddress] >= retryLimit) {
+          console.error(`Circuit breaker triggered for service: ${serviceAddress}. Moving to the next instance.`);
+          circuitBreakerTimeouts[serviceAddress] = Date.now(); // Open circuit breaker for this instance
+          break; // Exit retry loop to try the next instance
+        }
       }
     }
+
+    instanceAttempts++;
   }
 
-  return null;
+  console.error(`All attempts failed for service: ${initialServiceName}\n`);
+  return null; // Return null if all instances fail
 };
 
 
@@ -115,7 +125,7 @@ const circuitBreaker = async (serviceAddress, reqConfig) => {
 const getServiceAddress = async (serviceName) => {
   const response = await axios.get(`http://service-discovery:4000/lookup/${serviceName}`);
   const serviceAddresses = response.data.serviceAddresses;
-  console.log(serviceAddresses);
+  //console.log(serviceAddresses);
 
   if (serviceAddresses.length === 0) {
     throw new Error(`No instances found for service: ${serviceName}`);
@@ -144,7 +154,7 @@ const getServiceAddress = async (serviceName) => {
 
   roundRobinIndexes[serviceName] = currentIndex + 1;
 
-  console.log(`Request done on service address: ${modifiedServiceAddress}`);
+  //console.log(`Request done on service address: ${modifiedServiceAddress}`);
 
   return modifiedServiceAddress; 
 };
@@ -152,9 +162,9 @@ const getServiceAddress = async (serviceName) => {
 // gRPC Endpoint: Get Profile Service status
 app.get('/profile/status', async (req, res) => {
   try {
-    const serviceAddress = await getServiceAddress('profile');
-    const response = await circuitBreaker(serviceAddress, {
-      url: `${serviceAddress}/status`,
+    //const serviceAddress = await getServiceAddress('profile');
+    const response = await circuitBreaker('profile', {
+      url: `/status`,
       method: 'get',
       timeout: taskTimeoutLimit
     });
@@ -169,12 +179,12 @@ app.get('/profile/status', async (req, res) => {
   }
 });
 
-// gRPC Endpoint: Get Battleship Service status
+// Get Battleship Service status
 app.get('/battleship/status', async (req, res) => {
   try {
-    const serviceAddress = await getServiceAddress('battleship');
-    const response = await circuitBreaker(serviceAddress, {
-      url: `${serviceAddress}/status`,
+    //const serviceAddress = await getServiceAddress('battleship');
+    const response = await circuitBreaker('battleship', {
+      url: `/status`,
       method: 'get',
       timeout: taskTimeoutLimit
     });
@@ -189,26 +199,26 @@ app.get('/battleship/status', async (req, res) => {
   }
 });
 
-// gRPC Endpoint: Handle Profile Service requests (Round-Robin Load Balancing)
+// Handle Profile Service requests (Round-Robin Load Balancing)
 app.post('/auth/:action', async (req, res) => {
   const action = req.params.action;
   const data = req.body;
   const authHeader = req.headers.authorization;
 
   try {
-    const serviceAddress = await getServiceAddress('profile');
+    //const serviceAddress = await getServiceAddress('profile');
     let reqConfig;
 
     switch (action) {
       case 'register':
-        reqConfig = { url: `${serviceAddress}/auth/register`, method: 'post', data, timeout: taskTimeoutLimit };
+        reqConfig = { url: `/auth/register`, method: 'post', data, timeout: 1 };
         break;
       case 'login':
-        reqConfig = { url: `${serviceAddress}/auth/login`, method: 'post', data, timeout: taskTimeoutLimit };
+        reqConfig = { url: `/auth/login`, method: 'post', data, timeout: taskTimeoutLimit };
         break;
       case 'profile':
         reqConfig = {
-          url: `${serviceAddress}/auth/profile`,
+          url: `/auth/profile`,
           method: 'get',
           headers: { Authorization: authHeader },
           timeout: taskTimeoutLimit,
@@ -216,7 +226,7 @@ app.post('/auth/:action', async (req, res) => {
         break;
       case 'update-stats':
         reqConfig = {
-          url: `${serviceAddress}/update-stats`,
+          url: `/update-stats`,
           method: 'post',
           data,
           headers: { Authorization: authHeader },
@@ -227,7 +237,7 @@ app.post('/auth/:action', async (req, res) => {
         throw new Error('Unsupported action for Profile service');
     }
 
-    const response = await circuitBreaker(serviceAddress, reqConfig);
+    const response = await circuitBreaker('profile', reqConfig);
     if (!response) {
       res.status(503).json({ error: 'Profile Service is temporarily unavailable' });
     } else {
