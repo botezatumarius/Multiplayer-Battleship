@@ -49,6 +49,7 @@ services:
     networks:
       - battleship-network
     environment:
+      - MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=prometheus
       - SERVER_PORT=8081 
       - MONGO_HOST=mongodb
       - MONGO_PORT=27017
@@ -65,6 +66,7 @@ services:
     networks:
       - battleship-network
     environment:
+      - MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=prometheus
       - SERVER_PORT=8082 
       - MONGO_HOST=mongodb
       - MONGO_PORT=27017
@@ -81,6 +83,7 @@ services:
     networks:
       - battleship-network
     environment:
+      - MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE=prometheus
       - SERVER_PORT=8083 
       - MONGO_HOST=mongodb
       - MONGO_PORT=27017
@@ -161,6 +164,24 @@ services:
       - POSTGRES_PASSWORD=daniela
     networks:
       - battleship-network
+
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - battleship-network
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3001:3000"
+    networks:
+      - battleship-network
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=password
 
 networks:
   battleship-network:

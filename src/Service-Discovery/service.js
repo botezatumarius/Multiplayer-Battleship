@@ -3,9 +3,37 @@ const Redis = require('redis');
 const grpc = require('@grpc/grpc-js');
 const protoLoader = require('@grpc/proto-loader');
 const axios = require('axios'); 
+const promClient = require('prom-client');
+const register = new promClient.Registry();
+promClient.collectDefaultMetrics({ register });
 
 const app = express();
 app.use(express.json());
+
+// Metrics for service discovery
+const registeredServicesGauge = new promClient.Gauge({
+  name: 'registered_services_total',
+  help: 'Total number of registered services in the service discovery system',
+});
+
+const successfulHealthChecksCounter = new promClient.Counter({
+  name: 'successful_health_checks_total',
+  help: 'Total number of successful health checks performed on services',
+});
+
+const failedHealthChecksCounter = new promClient.Counter({
+  name: 'failed_health_checks_total',
+  help: 'Total number of failed health checks performed on services',
+});
+
+// Register the metrics
+register.registerMetric(registeredServicesGauge);
+register.registerMetric(successfulHealthChecksCounter);
+register.registerMetric(failedHealthChecksCounter);
+
+
+
+
 
 // Load gRPC service definition
 const packageDefinition = protoLoader.loadSync('service.proto', {});
@@ -82,8 +110,12 @@ const startServiceHealthChecks = () => {
           }
             const response = await axios.get(`${modifiedServiceAddress}/status`);
             console.log(`Service ${serviceName} at ${modifiedServiceAddress} is alive. Status: ${response.status}`);
+            // Increment the successful health check counter
+            successfulHealthChecksCounter.inc();
           } catch (error) {
             console.error(`Service ${serviceName} at ${modifiedServiceAddress} is down. Error: ${error.message}`);
+            // Increment the failed health check counter
+            failedHealthChecksCounter.inc();
           }
         }
       }
@@ -92,6 +124,12 @@ const startServiceHealthChecks = () => {
     }
   }, 20000); // 20-second interval
 };
+
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', register.contentType);
+  res.end(await register.metrics());
+});
+
 
 // Lookup a service
 app.get('/lookup/:serviceName', async (req, res) => {
@@ -142,6 +180,10 @@ app.post('/register', async (req, res) => {
 
     // Initialize the key as a list and add the service address
     await redisClient.rPush(serviceName, serviceAddress);
+    
+    // Update the registered services metric
+    registeredServicesGauge.inc();
+    
     res.status(200).json({ message: `${serviceName} registered successfully` });
   } catch (err) {
     res.status(500).json({ error: 'Failed to register service', details: err.message });

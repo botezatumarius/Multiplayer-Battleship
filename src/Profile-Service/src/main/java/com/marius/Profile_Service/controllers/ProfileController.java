@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.client.RestTemplate;
 
 import com.marius.Profile_Service.models.User;
 import com.marius.Profile_Service.services.AuthService;
@@ -19,6 +20,9 @@ public class ProfileController {
 
     @Autowired
     private AuthService authService;
+
+    @Autowired
+    private RestTemplate restTemplate;
 
     @GetMapping("/status")
     public String status() {

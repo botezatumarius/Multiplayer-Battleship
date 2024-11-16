@@ -4,6 +4,7 @@ const protoLoader = require('@grpc/proto-loader');
 const axios = require('axios');
 const app = express();
 const port = 3000;
+const client = require('prom-client'); 
 
 let requestCount = 0; // Track number of requests per second
 const threshold = 1; // Threshold for critical load
@@ -11,7 +12,7 @@ const resetInterval = 1000; // Reset request counter every second
 const retryLimit = 3; // Circuit breaker threshold for failures
 const taskTimeoutLimit = 5000; // Timeout for task requests
 let concurrentTasks = 0; // Number of concurrent tasks
-const concurrentTaskLimit = 1; // Maximum number of concurrent tasks allowed
+const concurrentTaskLimit = 4; // Maximum number of concurrent tasks allowed
 
 // Store retry counts for requests
 const retryCounts = {};
@@ -27,6 +28,26 @@ const serviceDiscoveryClient = new proto.ServiceDiscovery('service-discovery:500
 // Object to store round-robin indexes for services
 const roundRobinIndexes = {};
 
+// Prometheus metrics setup
+const collectDefaultMetrics = client.collectDefaultMetrics;
+collectDefaultMetrics();
+
+// Custom metrics
+const requestCounts = new client.Counter({
+  name: 'api_gateway_request_count',
+  help: 'Total number of requests received',
+});
+
+const concurrentTasksGauge = new client.Gauge({
+  name: 'api_gateway_concurrent_tasks',
+  help: 'Current number of concurrent tasks',
+});
+
+const highLoadCount = new client.Counter({
+  name: 'api_gateway_high_load_count',
+  help: 'Count of times high load threshold was exceeded',
+});
+
 // Middleware
 app.use(express.json());
 
@@ -38,12 +59,15 @@ app.server = app.listen(port, () => {
 setInterval(() => {
   if (requestCount > threshold) {
     console.warn(`High load alert: ${requestCount} requests per second exceeded the threshold of ${threshold}`);
+    highLoadCount.inc();
   }
   requestCount = 0; // Reset the counter
 }, resetInterval);
 
 // Middleware to enforce concurrency limit
 app.use(async (req, res, next) => {
+  requestCounts.inc();
+  concurrentTasksGauge.inc();
   if (concurrentTasks >= concurrentTaskLimit) {
     return res.status(429).json({ error: 'Too many requests - concurrency limit reached' });
   }
@@ -52,6 +76,7 @@ app.use(async (req, res, next) => {
   try {
     next(); // Proceed with request
   } finally {
+    concurrentTasksGauge.dec();
     concurrentTasks--; // Decrement task count when request completes
   }
 });
@@ -273,5 +298,16 @@ app.get('/service-discovery/status', async (req, res) => {
   } catch (error) {
     console.error('Error checking Service Discovery status:', error.message);
     res.status(500).json({ error: 'Error checking Service Discovery status' });
+  }
+});
+
+// The `/metrics` endpoint for Prometheus
+app.get('/metrics', async (req, res) => {
+  try {
+    res.set('Content-Type', client.register.contentType);
+    res.end(await client.register.metrics());
+  } catch (error) {
+    console.error('Error fetching metrics:', error.message);
+    res.status(500).json({ error: 'Error fetching metrics' });
   }
 });

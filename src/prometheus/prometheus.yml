@@ -1,0 +1,27 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: "api_gateway"
+    static_configs:
+      - targets: ["api-gateway:3000"]
+
+  - job_name: "service_discovery"
+    static_configs:
+      - targets: ["service-discovery:4000"]
+
+  - job_name: "battleship_service"
+    static_configs:
+      - targets:
+          - "battleship-service-1:8081"
+          - "battleship-service-2:8082"
+          - "battleship-service-3:8083"
+    metrics_path: "/actuator/prometheus"
+
+  - job_name: "profile_service"
+    static_configs:
+      - targets:
+          - "profile-service-1:8084"
+          - "profile-service-2:8085"
+          - "profile-service-3:8086"
+    metrics_path: "/actuator/prometheus"

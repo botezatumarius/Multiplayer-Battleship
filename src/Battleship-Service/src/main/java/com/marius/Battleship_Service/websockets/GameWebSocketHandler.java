@@ -1,13 +1,15 @@
 package com.marius.Battleship_Service.websockets;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
-import org.apache.el.stream.Optional;
 import org.json.JSONObject;
 import org.springframework.stereotype.Component;
 import com.marius.Battleship_Service.models.Game;
 import com.marius.Battleship_Service.services.GameService;
+import com.marius.Battleship_Service.services.CustomMetricsService;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -17,10 +19,28 @@ import java.util.concurrent.ConcurrentHashMap;
 public class GameWebSocketHandler extends TextWebSocketHandler {
 
     private final GameService gameService;
+    private final CustomMetricsService customMetricsService;
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
 
-    public GameWebSocketHandler(GameService gameService) {
+    @Autowired
+    public GameWebSocketHandler(GameService gameService, CustomMetricsService customMetricsService) {
         this.gameService = gameService;
+        this.customMetricsService = customMetricsService;
+    }
+
+    @Override
+    public void afterConnectionEstablished(WebSocketSession session) throws Exception {
+
+        // Increment active connection counter
+        customMetricsService.incrementActiveWebSocketConnections();
+
+        System.out.println("WebSocket session established");
+    }
+
+    @Override
+    public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
+        super.afterConnectionClosed(session, status);
+        customMetricsService.decrementActiveWebSocketConnections();
     }
 
     @Override
@@ -142,7 +162,7 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
         String attackerId = (String) request.get("attacker_id");
         Map<String, Integer> coordinates = (Map<String, Integer>) request.get("coordinates");
 
-        // Process attack (implement your logic here)
+        // Process attack
         // gameService.processAttack(gameId, attackerId, coordinates);
 
         // Notify both players of the result (or broadcast to the game)
@@ -173,8 +193,8 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
                         "game_id", game.getId(),
                         "status", "game_ended"));
             }
-            // Optionally: Remove the game from the database if the creator leaves
-            gameService.removeGame(gameId); // Ensure this method is implemented to handle removal
+            // Remove the game from the database if the creator leaves
+            gameService.removeGame(gameId);
 
         } else if (playerId.equals(game.getPlayer2Id())) {
             // Notify the creator that the opponent has left
@@ -201,8 +221,6 @@ public class GameWebSocketHandler extends TextWebSocketHandler {
 
     private void sendMessageToGame(String gameId, Map<String, Object> payload) {
         // Send message to all players in the game
-        // For simplicity, assuming both players are in the session map
-        // Broadcast message to both players (implement your logic here)
     }
 
     private Map<String, Object> parsePayload(String payload) {
