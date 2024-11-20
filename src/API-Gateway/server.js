@@ -7,12 +7,12 @@ const port = 3000;
 const client = require('prom-client'); 
 
 let requestCount = 0; // Track number of requests per second
-const threshold = 1; // Threshold for critical load
+const threshold = 5; // Threshold for critical load
 const resetInterval = 1000; // Reset request counter every second
 const retryLimit = 3; // Circuit breaker threshold for failures
 const taskTimeoutLimit = 5000; // Timeout for task requests
 let concurrentTasks = 0; // Number of concurrent tasks
-const concurrentTaskLimit = 4; // Maximum number of concurrent tasks allowed
+const concurrentTaskLimit = 5; // Maximum number of concurrent tasks allowed
 
 // Store retry counts for requests
 const retryCounts = {};
@@ -31,6 +31,121 @@ const roundRobinIndexes = {};
 // Prometheus metrics setup
 const collectDefaultMetrics = client.collectDefaultMetrics;
 collectDefaultMetrics();
+
+
+
+async function finishGame(gameId, username, result) {
+  const transactionId = `txn_${Date.now()}`;
+  let battleshipServiceAddress, profileServiceAddress;
+
+  const servicesToRollback = [];
+
+  try {
+    battleshipServiceAddress = await getServiceAddress('battleship');
+    profileServiceAddress = await getServiceAddress('profile');
+
+    const prepareEndpoints = [
+      { url: `${battleshipServiceAddress}/prepare`, data: { transactionId, gameId, username } },
+      { url: `${profileServiceAddress}/prepare`, data: { transactionId, username, result } }
+    ];
+
+    // Phase 1: Prepare
+    for (const endpoint of prepareEndpoints) {
+      console.log(`Sending prepare request to: ${endpoint.url}`);
+      try {
+        const response = await axios.post(endpoint.url, endpoint.data);
+
+        if (response.data.status === 'ready') {
+          servicesToRollback.push(endpoint.url.replace('/prepare', '/rollback')); 
+          console.log(`Service ready: ${endpoint.url}`);
+        } else {
+          console.error(`Service not ready: ${endpoint.url}`);
+        }
+      } catch (prepareError) {
+        console.error(`Prepare request failed for ${endpoint.url}. Transaction ID: ${transactionId}`);
+        console.error(`Error: ${prepareError.message}`);
+      }
+    }
+
+    // Check if all services passed preparation
+    if (servicesToRollback.length !== prepareEndpoints.length) {
+      console.log('Not all services prepared successfully.');
+      for (const rollbackUrl of servicesToRollback) {
+        console.log(`Sending rollback request to: ${rollbackUrl}`);
+        try {
+          await axios.post(rollbackUrl, { transactionId });
+          console.log(`Rollback successful for: ${rollbackUrl}`);
+        } catch (rollbackError) {
+          console.error(`Rollback request failed for ${rollbackUrl}. Transaction ID: ${transactionId}`);
+          console.error(`Error: ${rollbackError.message}`);
+        }
+      }
+      console.error('Prepare phase failed.');
+      return -1; // Indicate failure if preparation phase fails
+    }
+
+    // Phase 2: Commit
+    console.log('Prepare phase completed. Proceeding to commit...');
+    const commitEndpoints = [
+      { url: `${battleshipServiceAddress}/commit`, data: { transactionId, gameId, username } },
+      { url: `${profileServiceAddress}/commit`, data: { transactionId, username, result } }
+    ];
+
+    let commitFailed = false;
+
+    for (const endpoint of commitEndpoints) {
+      console.log(`Sending commit request to: ${endpoint.url}`);
+      try {
+        await axios.post(endpoint.url, endpoint.data);
+        console.log(`Commit successful for: ${endpoint.url}`);
+      } catch (commitError) {
+        console.error(`Commit request failed for ${endpoint.url}. Transaction ID: ${transactionId}`);
+        console.error(`Error: ${commitError.message}`);
+        commitFailed = true;
+      }
+    }
+
+    // If any commit fails, initiate rollbacks
+    if (commitFailed) {
+      console.log('One or more commit requests failed. Initiating rollback...');
+      for (const rollbackUrl of servicesToRollback) {
+        console.log(`Sending rollback request to: ${rollbackUrl}`);
+        try {
+          await axios.post(rollbackUrl, { transactionId,gameId,username });
+          console.log(`Rollback successful for: ${rollbackUrl}`);
+        } catch (rollbackError) {
+          console.error(`Rollback request failed for ${rollbackUrl}. Transaction ID: ${transactionId}`);
+          console.error(`Error: ${rollbackError.message}`);
+        }
+      }
+      return -1; // Indicate failure if commit phase fails
+    }
+
+    console.log('Transaction committed successfully.');
+    return 0; 
+  } catch (error) {
+    console.error('Unexpected error occurred. Initiating rollback...');
+
+    try {
+      for (const rollbackUrl of servicesToRollback) {
+        console.log(`Sending rollback request to: ${rollbackUrl}`);
+        try {
+          await axios.post(rollbackUrl, { transactionId });
+          console.log(`Final rollback successful for: ${rollbackUrl}`);
+        } catch (rollbackError) {
+          console.error(`Final rollback request failed for ${rollbackUrl}. Transaction ID: ${transactionId}`);
+          console.error(`Error: ${rollbackError.message}`);
+        }
+      }
+    } catch (finalRollbackError) {
+      console.error('Final rollback phase encountered errors.');
+      console.error(`Error: ${finalRollbackError.message}`);
+    }
+    return -1; // Indicate failure for unexpected errors
+  }
+}
+
+
 
 // Custom metrics
 const requestCounts = new client.Counter({
@@ -184,6 +299,26 @@ const getServiceAddress = async (serviceName) => {
   return modifiedServiceAddress; 
 };
 
+// Game finished, update databases
+app.post('/game/finish', async (req, res) => {
+  const { gameId, username, result } = req.body;
+
+  try {
+    const finishResult = await finishGame(gameId, username, result);
+    
+    if (finishResult === -1) {
+      console.error('Failed to finish game');
+      return res.status(500).json({ error: 'Failed to finish game.' });
+    }
+
+    res.status(200).json({ message: 'Game finished successfully.' });
+  } catch (error) {
+    console.error(error.message);
+    res.status(500).json({ error: 'Failed to finish game.' });
+  }
+});
+
+
 // gRPC Endpoint: Get Profile Service status
 app.get('/profile/status', async (req, res) => {
   try {
@@ -236,7 +371,7 @@ app.post('/auth/:action', async (req, res) => {
 
     switch (action) {
       case 'register':
-        reqConfig = { url: `/auth/register`, method: 'post', data, timeout: 1 };
+        reqConfig = { url: `/auth/register`, method: 'post', data, timeout: taskTimeoutLimit };
         break;
       case 'login':
         reqConfig = { url: `/auth/login`, method: 'post', data, timeout: taskTimeoutLimit };

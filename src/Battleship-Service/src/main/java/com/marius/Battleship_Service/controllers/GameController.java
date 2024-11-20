@@ -1,8 +1,5 @@
 package com.marius.Battleship_Service.controllers;
 
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RestController;
-
 import com.marius.Battleship_Service.models.Game;
 import com.marius.Battleship_Service.services.GameService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -77,4 +74,5 @@ public class GameController {
                 "message", "You have left the game.",
                 "status", "player_left"));
     }
+
 }

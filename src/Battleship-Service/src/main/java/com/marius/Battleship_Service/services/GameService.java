@@ -6,7 +6,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
 
@@ -15,6 +17,9 @@ public class GameService {
 
     @Autowired
     private GameRepository gameRepository;
+
+    // Temporary in-memory rollback log
+    private final Map<String, String> rollbackLog = new HashMap<>();
 
     public Game createGame(String playerId) {
         Game game = new Game();
@@ -142,11 +147,54 @@ public class GameService {
             throw new IllegalArgumentException("Game ID must not be null or empty");
         }
 
-        // Optional: Check if the game exists before trying to delete
         if (!gameRepository.existsById(gameId)) {
             throw new IllegalArgumentException("Game not found with ID: " + gameId);
         }
 
         gameRepository.deleteById(gameId);
+    }
+
+    public boolean validateGameForTransaction(String gameId, String username) {
+        Optional<Game> game = gameRepository.findById(gameId);
+        if (game.isEmpty()) {
+            return false; // Game not found
+        }
+
+        Game existingGame = game.get();
+        rollbackLog.put(gameId, existingGame.getStatus());
+        return (username.equals(existingGame.getPlayer1Id()) || username.equals(existingGame.getPlayer2Id()));
+    }
+
+    // Commit phase: Update game status to finished
+    public boolean commitGame(String gameId) {
+        Optional<Game> game = gameRepository.findById(gameId);
+        if (!game.isEmpty()) {
+            Game existingGame = game.get();
+
+            existingGame.setStatus("finished");
+            gameRepository.save(existingGame);
+            return true;
+        }
+        return false;
+    }
+
+    // Rollback phase: Revert game status to previous state
+    public boolean rollbackGame(String gameId) {
+        if (rollbackLog.containsKey(gameId)) {
+            Optional<Game> game = gameRepository.findById(gameId);
+            if (!game.isEmpty()) {
+                Game existingGame = game.get();
+
+                // Revert to the previous status
+                String previousStatus = rollbackLog.get(gameId);
+                existingGame.setStatus(previousStatus);
+
+                // Save the reverted state and remove the log entry
+                gameRepository.save(existingGame);
+                rollbackLog.remove(gameId);
+                return true;
+            }
+        }
+        return false; // Rollback failed
     }
 }

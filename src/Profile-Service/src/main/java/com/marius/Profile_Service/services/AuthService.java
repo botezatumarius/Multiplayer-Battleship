@@ -2,6 +2,7 @@ package com.marius.Profile_Service.services;
 
 import com.marius.Profile_Service.models.User;
 import com.marius.Profile_Service.repositories.UserRepository;
+
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
@@ -12,9 +13,7 @@ import org.springframework.stereotype.Service;
 
 import javax.crypto.spec.SecretKeySpec;
 import java.security.Key;
-import java.util.Base64;
-import java.util.Date;
-import java.util.Optional;
+import java.util.*;
 
 @Service
 public class AuthService {
@@ -24,8 +23,8 @@ public class AuthService {
 
     private BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
-    // Generate a secure signing key
     private final Key signingKey = Keys.secretKeyFor(SignatureAlgorithm.HS256);
+    private final Map<String, User> rollbackLog = new HashMap<>();
 
     public String registerUser(String username, String password) {
         Optional<User> existingUser = userRepository.findByUsername(username);
@@ -50,7 +49,6 @@ public class AuthService {
     }
 
     private String generateToken(User user) {
-        System.out.println("GENERATING TOKEN!!!!!!!!!!!!");
         return Jwts.builder()
                 .setSubject(user.getUsername())
                 .claim("user_id", user.getId())
@@ -71,7 +69,40 @@ public class AuthService {
         return userRepository.findByUsername(username);
     }
 
-    public String updateUserStats(User user, String result) {
+    public Optional<User> getUserByUsername(String username) {
+        return userRepository.findByUsername(username);
+    }
+
+    public void logRollbackState(String transactionId, User user) {
+        User clonedUser = new User();
+        clonedUser.setId(user.getId());
+        clonedUser.setUsername(user.getUsername());
+        clonedUser.setPassword(user.getPassword());
+        clonedUser.setTotalGames(user.getTotalGames());
+        clonedUser.setWins(user.getWins());
+        clonedUser.setLosses(user.getLosses());
+
+        rollbackLog.put(transactionId, clonedUser);
+    }
+
+    public boolean rollbackUserStats(String transactionId) {
+        if (rollbackLog.containsKey(transactionId)) {
+            User originalState = rollbackLog.get(transactionId);
+            userRepository.save(originalState);
+            rollbackLog.remove(transactionId);
+            return true;
+        }
+        return false;
+    }
+
+    public String updateUserStats(String username, String result) {
+        Optional<User> userOpt = userRepository.findByUsername(username);
+        if (userOpt.isEmpty()) {
+            throw new IllegalArgumentException("User not found.");
+        }
+
+        User user = userOpt.get();
+
         if ("win".equals(result)) {
             user.setWins(user.getWins() + 1);
         } else if ("loss".equals(result)) {
